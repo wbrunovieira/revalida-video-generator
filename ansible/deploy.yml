@@ -1,0 +1,282 @@
+---
+# Orchestrator Playbook - Single Entry Point for Everything
+# This playbook manages Terraform AND Ansible configuration
+#
+# Usage:
+#   ansible-playbook deploy.yml
+#   ansible-playbook deploy.yml --tags terraform
+#   ansible-playbook deploy.yml --tags config
+
+- name: Video Generation Server - Complete Deployment
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    terraform_dir: "{{ playbook_dir }}/../terraform"
+    ansible_dir: "{{ playbook_dir }}"
+    aws_region: "us-east-2"
+    aws_profile: "bruno-admin-revalida-aws"
+
+  tasks:
+    - name: Display deployment banner
+      debug:
+        msg: |
+          ==========================================
+          🚀 VIDEO GENERATION SERVER DEPLOYMENT
+          ==========================================
+          This will:
+          1. Check Terraform state
+          2. Apply any infrastructure changes
+          3. Start server if stopped
+          4. Configure server with Ansible
+          ==========================================
+
+    # ============================================
+    # STEP 1: TERRAFORM MANAGEMENT
+    # ============================================
+    - name: Check if Terraform is initialized
+      stat:
+        path: "{{ terraform_dir }}/.terraform"
+      register: terraform_init
+      tags: [terraform, always]
+
+    - name: Initialize Terraform if needed
+      command: terraform init
+      args:
+        chdir: "{{ terraform_dir }}"
+      when: not terraform_init.stat.exists
+      tags: [terraform]
+
+    - name: Run Terraform plan
+      command: terraform plan -out=tfplan
+      args:
+        chdir: "{{ terraform_dir }}"
+      register: terraform_plan_result
+      changed_when: "'No changes' not in terraform_plan_result.stdout"
+      tags: [terraform]
+
+    - name: Display Terraform plan status
+      debug:
+        msg: |
+          {% if 'No changes' in terraform_plan_result.stdout %}
+          ✅ Infrastructure is up to date
+          {% else %}
+          ⚠️  Infrastructure changes detected - will apply
+          {% endif %}
+      tags: [terraform]
+
+    - name: Apply Terraform changes
+      command: terraform apply -auto-approve tfplan
+      args:
+        chdir: "{{ terraform_dir }}"
+      when: "'No changes' not in terraform_plan_result.stdout"
+      register: terraform_apply
+      tags: [terraform]
+
+    - name: Display Terraform apply result
+      debug:
+        msg: "✅ Terraform changes applied successfully"
+      when: terraform_apply is changed
+      tags: [terraform]
+
+    - name: Get Terraform outputs
+      command: terraform output -json
+      args:
+        chdir: "{{ terraform_dir }}"
+      register: terraform_outputs_raw
+      changed_when: false
+      tags: [always]
+
+    - name: Parse Terraform outputs
+      set_fact:
+        terraform_outputs: "{{ terraform_outputs_raw.stdout | from_json }}"
+      tags: [always]
+
+    - name: Extract server information
+      set_fact:
+        instance_id: "{{ terraform_outputs.instance_id.value }}"
+        server_ip: "{{ terraform_outputs.public_ip.value }}"
+        instance_type: "{{ terraform_outputs.instance_type.value }}"
+      tags: [always]
+
+    - name: Display server information
+      debug:
+        msg: |
+          📍 Server Information:
+             Instance ID: {{ instance_id }}
+             Public IP:   {{ server_ip }}
+             Type:        {{ instance_type }}
+      tags: [always]
+
+    # ============================================
+    # STEP 2: CHECK & START EC2 INSTANCE
+    # ============================================
+    - name: Check EC2 instance state
+      command: >
+        aws ec2 describe-instances
+        --instance-ids {{ instance_id }}
+        --region {{ aws_region }}
+        --profile {{ aws_profile }}
+        --query 'Reservations[0].Instances[0].State.Name'
+        --output text
+      register: instance_state
+      changed_when: false
+      tags: [instance, always]
+
+    - name: Display instance state
+      debug:
+        msg: "Instance state: {{ instance_state.stdout }}"
+      tags: [instance, always]
+
+    - name: Start instance if stopped
+      command: >
+        aws ec2 start-instances
+        --instance-ids {{ instance_id }}
+        --region {{ aws_region }}
+        --profile {{ aws_profile }}
+      when: instance_state.stdout in ['stopped', 'stopping']
+      register: start_instance
+      tags: [instance]
+
+    - name: Wait for instance to be running
+      command: >
+        aws ec2 describe-instances
+        --instance-ids {{ instance_id }}
+        --region {{ aws_region }}
+        --profile {{ aws_profile }}
+        --query 'Reservations[0].Instances[0].State.Name'
+        --output text
+      register: instance_running_check
+      until: instance_running_check.stdout == 'running'
+      retries: 30
+      delay: 10
+      when: start_instance is changed
+      tags: [instance]
+
+    - name: Display instance started message
+      debug:
+        msg: "✅ Instance is now running"
+      when: start_instance is changed
+      tags: [instance]
+
+    # ============================================
+    # STEP 3: WAIT FOR SSH
+    # ============================================
+    - name: Wait for SSH to be ready
+      wait_for:
+        host: "{{ server_ip }}"
+        port: 22
+        delay: 10
+        timeout: 300
+        state: started
+      tags: [ssh, config]
+
+    - name: Test SSH connection
+      command: >
+        ssh -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        -o ConnectTimeout=5
+        -i ~/.ssh/id_rsa
+        ubuntu@{{ server_ip }}
+        "echo 'SSH Ready'"
+      register: ssh_test
+      retries: 5
+      delay: 10
+      until: ssh_test.rc == 0
+      changed_when: false
+      tags: [ssh, config]
+
+    - name: Display SSH ready message
+      debug:
+        msg: "✅ SSH connection established"
+      tags: [ssh, config]
+
+    # ============================================
+    # STEP 4: GENERATE ANSIBLE INVENTORY
+    # ============================================
+    - name: Ensure inventory file exists
+      stat:
+        path: "{{ ansible_dir }}/inventory.yml"
+      register: inventory_file
+      tags: [config]
+
+    - name: Generate inventory if missing
+      command: terraform apply -auto-approve -target=local_file.ansible_inventory
+      args:
+        chdir: "{{ terraform_dir }}"
+      when: not inventory_file.stat.exists
+      tags: [config]
+
+    - name: Display inventory status
+      debug:
+        msg: "✅ Ansible inventory ready"
+      tags: [config]
+
+    # ============================================
+    # STEP 5: RUN SERVER CONFIGURATION
+    # ============================================
+    - name: Display configuration message
+      debug:
+        msg: |
+          ==========================================
+          🔧 Configuring server...
+          This may take 10-20 minutes on first run
+          (Python packages installation)
+          ==========================================
+      tags: [config]
+
+- name: Configure Video Generation Server
+  hosts: video_server
+  gather_facts: yes
+  become: true
+  vars:
+    app_dir: /home/ubuntu/video-generation
+    models_dir: /mnt/models
+    output_dir: /mnt/output
+  tags: [config]
+
+  tasks:
+    - name: Display server configuration message
+      debug:
+        msg: |
+          ========================================
+          🔧 CONFIGURING SERVER
+          ========================================
+          Host: {{ ansible_host }}
+          ========================================
+
+    - name: Run server setup tasks
+      include_tasks: tasks/server-setup.yml
+
+# ============================================
+# FINAL STATUS
+# ============================================
+- name: Display Deployment Summary
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  tags: [always]
+
+  tasks:
+    - name: Show deployment summary
+      debug:
+        msg: |
+          ==========================================
+          🎉 DEPLOYMENT COMPLETED SUCCESSFULLY!
+          ==========================================
+
+          📍 Server Details:
+             IP:   {{ server_ip }}
+             Type: {{ instance_type }}
+             ID:   {{ instance_id }}
+
+          🔌 Connect:
+             ssh -i ~/.ssh/id_rsa ubuntu@{{ server_ip }}
+
+          🛠️  Next Steps:
+             1. SSH into server
+             2. Run: video-status
+             3. Download models: download-model tencent/HunyuanVideo
+             4. Start generating videos!
+
+          ==========================================

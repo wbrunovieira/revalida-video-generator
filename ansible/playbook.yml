@@ -1,0 +1,321 @@
+---
+- name: Setup Video Generation Server
+  hosts: video_server
+  gather_facts: yes
+  become: true
+  vars:
+    app_dir: /home/ubuntu/video-generation
+    models_dir: /mnt/models
+    output_dir: /mnt/output
+
+  tasks:
+    - name: Display deployment information
+      debug:
+        msg: |
+          ========================================
+          🚀 VIDEO GENERATION SERVER SETUP
+          ========================================
+          Server: {{ ansible_host }}
+          Timestamp: {{ ansible_date_time.date }} {{ ansible_date_time.time }}
+          ========================================
+
+    # ============================================
+    # STEP 1: SYSTEM UPDATE & ESSENTIAL PACKAGES
+    # ============================================
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install essential packages
+      apt:
+        name:
+          - build-essential
+          - git
+          - wget
+          - curl
+          - vim
+          - htop
+          - nvtop
+          - tmux
+          - python3-pip
+          - python3-venv
+          - awscli
+          - jq
+          - rsync
+          - unzip
+          - ffmpeg
+        state: present
+
+    # ============================================
+    # STEP 2: MOUNT EBS VOLUMES
+    # ============================================
+    - name: Check if models volume is formatted
+      shell: file -s /dev/nvme1n1
+      register: models_volume_check
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Format models volume if needed
+      filesystem:
+        fstype: ext4
+        dev: /dev/nvme1n1
+      when: "'ext4' not in models_volume_check.stdout"
+
+    - name: Check if output volume is formatted
+      shell: file -s /dev/nvme2n1
+      register: output_volume_check
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Format output volume if needed
+      filesystem:
+        fstype: ext4
+        dev: /dev/nvme2n1
+      when: "'ext4' not in output_volume_check.stdout"
+
+    - name: Create mount points
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      loop:
+        - "{{ models_dir }}"
+        - "{{ output_dir }}"
+
+    - name: Mount models volume
+      mount:
+        path: "{{ models_dir }}"
+        src: /dev/nvme1n1
+        fstype: ext4
+        opts: defaults,nofail
+        state: mounted
+
+    - name: Mount output volume
+      mount:
+        path: "{{ output_dir }}"
+        src: /dev/nvme2n1
+        fstype: ext4
+        opts: defaults,nofail
+        state: mounted
+
+    - name: Set ownership for mounted volumes
+      file:
+        path: "{{ item }}"
+        owner: ubuntu
+        group: ubuntu
+        recurse: yes
+      loop:
+        - "{{ models_dir }}"
+        - "{{ output_dir }}"
+
+    # ============================================
+    # STEP 3: VERIFY GPU (if present)
+    # ============================================
+    - name: Check if nvidia-smi exists
+      stat:
+        path: /usr/bin/nvidia-smi
+      register: nvidia_smi
+
+    - name: Get GPU information
+      shell: nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+      register: gpu_info
+      when: nvidia_smi.stat.exists
+      changed_when: false
+
+    - name: Display GPU info
+      debug:
+        msg: |
+          GPU Information:
+          {{ gpu_info.stdout }}
+      when: nvidia_smi.stat.exists and gpu_info.rc == 0
+
+    - name: Display no GPU message
+      debug:
+        msg: "⚠️  No GPU detected - this is a CPU-only instance"
+      when: not nvidia_smi.stat.exists
+
+    # ============================================
+    # STEP 4: PYTHON ENVIRONMENT SETUP
+    # ============================================
+    - name: Create application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Check if venv exists
+      stat:
+        path: "{{ app_dir }}/venv"
+      register: venv_stat
+
+    - name: Create Python virtual environment
+      command: python3 -m venv {{ app_dir }}/venv
+      become_user: ubuntu
+      when: not venv_stat.stat.exists
+
+    - name: Upgrade pip in venv
+      pip:
+        name: pip
+        state: latest
+        virtualenv: "{{ app_dir }}/venv"
+      become_user: ubuntu
+
+    - name: Install ML packages in venv
+      pip:
+        name:
+          - torch
+          - torchvision
+          - torchaudio
+          - diffusers
+          - transformers
+          - accelerate
+          - xformers
+          - huggingface-hub
+          - opencv-python
+          - Pillow
+          - numpy
+          - scipy
+          - jupyter
+          - ipykernel
+        virtualenv: "{{ app_dir }}/venv"
+      become_user: ubuntu
+      async: 3600
+      poll: 0
+      register: pip_install
+
+    - name: Display pip install note
+      debug:
+        msg: "📦 ML packages installation started in background (may take 10-20 minutes)"
+
+    # ============================================
+    # STEP 5: BASH ALIASES & HELPERS
+    # ============================================
+    - name: Copy bash aliases file
+      copy:
+        src: files/bashrc-additions.sh
+        dest: /home/ubuntu/.bashrc-video-gen
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Source aliases in .bashrc
+      lineinfile:
+        path: /home/ubuntu/.bashrc
+        line: 'source ~/.bashrc-video-gen'
+        state: present
+        create: yes
+      become_user: ubuntu
+
+    # ============================================
+    # STEP 6: CREATE HELPER SCRIPTS
+    # ============================================
+    - name: Create system status script
+      copy:
+        dest: /usr/local/bin/video-status
+        content: |
+          #!/bin/bash
+          echo "=========================================="
+          echo "VIDEO GENERATION SERVER STATUS"
+          echo "=========================================="
+          echo ""
+          echo "📊 System Resources:"
+          free -h | grep -E "Mem|Swap"
+          echo ""
+          echo "💾 Disk Usage:"
+          df -h | grep -E "Filesystem|/mnt|/$"
+          echo ""
+          if command -v nvidia-smi &> /dev/null; then
+            echo "🎮 GPU Status:"
+            nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total --format=csv
+          else
+            echo "⚠️  No GPU detected"
+          fi
+          echo ""
+          echo "📁 Models Directory: {{ models_dir }}"
+          du -sh {{ models_dir }}/* 2>/dev/null | head -5 || echo "  (empty)"
+          echo ""
+          echo "📹 Output Directory: {{ output_dir }}"
+          du -sh {{ output_dir }}/* 2>/dev/null | head -5 || echo "  (empty)"
+          echo "=========================================="
+        mode: '0755'
+
+    - name: Create model download helper script
+      copy:
+        dest: /usr/local/bin/download-model
+        content: |
+          #!/bin/bash
+          # Download AI models using huggingface-cli
+
+          MODEL=$1
+
+          if [ -z "$MODEL" ]; then
+            echo "Usage: download-model <model-name>"
+            echo ""
+            echo "Examples:"
+            echo "  download-model tencent/HunyuanVideo"
+            echo "  download-model yihao-meng/HoloCine"
+            echo "  download-model THUDM/CogVideoX-5b"
+            echo ""
+            exit 1
+          fi
+
+          cd {{ models_dir }}
+          source {{ app_dir }}/venv/bin/activate
+
+          MODEL_NAME=$(basename $MODEL)
+          echo "📥 Downloading $MODEL to {{ models_dir }}/$MODEL_NAME"
+
+          huggingface-cli download $MODEL --local-dir $MODEL_NAME
+        mode: '0755'
+
+    # ============================================
+    # STEP 7: FINAL CHECKS & DISPLAY
+    # ============================================
+    - name: Get disk space
+      shell: df -h /
+      register: disk_space
+      changed_when: false
+
+    - name: Get memory info
+      shell: free -h
+      register: memory_info
+      changed_when: false
+
+    - name: Display setup summary
+      debug:
+        msg: |
+          ========================================
+          🎉 SETUP COMPLETED SUCCESSFULLY!
+          ========================================
+
+          📁 Directories Created:
+             - Models:  {{ models_dir }}
+             - Output:  {{ output_dir }}
+             - App:     {{ app_dir }}
+
+          🐍 Python Environment:
+             - Location: {{ app_dir }}/venv
+             - Activate: source {{ app_dir }}/venv/bin/activate
+
+          🛠️  Helper Commands:
+             - video-status          # Show system status
+             - download-model <name> # Download AI models
+
+          📦 Next Steps:
+             1. SSH into server: ssh ubuntu@{{ ansible_host }}
+             2. Check status: video-status
+             3. Download models: download-model tencent/HunyuanVideo
+             4. Start generating videos!
+
+          💾 Disk Space:
+          {{ disk_space.stdout }}
+
+          🧠 Memory:
+          {{ memory_info.stdout }}
+
+          ========================================

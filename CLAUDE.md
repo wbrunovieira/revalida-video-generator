@@ -17,13 +17,23 @@ This repository contains research, analysis, and infrastructure for text-to-vide
 ## Repository Structure
 
 ```
-videos/
+revalida-video-generator/
 ├── terraform/               # AWS infrastructure as code
 │   ├── README.md           # Setup instructions and troubleshooting
 │   ├── *.tf                # Terraform configuration files
-│   └── terraform.tfvars    # Configuration variables
+│   ├── terraform.tfvars    # Configuration variables (gitignored)
+│   ├── terraform.tfvars.example  # Template for configuration
+│   └── ansible.tf          # Ansible integration
+├── ansible/                 # Server configuration automation
+│   ├── README.md           # Ansible documentation
+│   ├── playbook.yml        # Main setup playbook
+│   ├── inventory.tpl       # Inventory template (for Terraform)
+│   ├── inventory.yml       # Generated inventory (gitignored)
+│   └── files/
+│       └── bashrc-additions.sh  # Bash aliases and helpers
 ├── docs/
 │   └── analise-modelos-text-to-video.md  # Comprehensive analysis document (Portuguese)
+├── .gitignore              # Protects sensitive data
 └── CLAUDE.md               # This file
 ```
 
