@@ -34,28 +34,28 @@
 # MOUNT EBS VOLUMES
 # ============================================
 - name: Check if models volume is formatted
-  shell: file -s /dev/nvme1n1
+  shell: blkid /dev/nvme1n1
   register: models_volume_check
   changed_when: false
-  ignore_errors: yes
+  failed_when: false  # Don't fail if volume is not formatted
 
 - name: Format models volume if needed
   filesystem:
     fstype: ext4
     dev: /dev/nvme1n1
-  when: "'ext4' not in models_volume_check.stdout"
+  when: models_volume_check.rc != 0  # Only format if blkid found nothing
 
 - name: Check if output volume is formatted
-  shell: file -s /dev/nvme2n1
+  shell: blkid /dev/nvme2n1
   register: output_volume_check
   changed_when: false
-  ignore_errors: yes
+  failed_when: false  # Don't fail if volume is not formatted
 
 - name: Format output volume if needed
   filesystem:
     fstype: ext4
     dev: /dev/nvme2n1
-  when: "'ext4' not in output_volume_check.stdout"
+  when: output_volume_check.rc != 0  # Only format if blkid found nothing
 
 - name: Create mount points
   file:
@@ -75,6 +75,7 @@
     fstype: ext4
     opts: defaults,nofail
     state: mounted
+    force: yes  # Force mount even if something is already mounted
 
 - name: Mount output volume
   mount:
@@ -83,6 +84,7 @@
     fstype: ext4
     opts: defaults,nofail
     state: mounted
+    force: yes  # Force mount even if something is already mounted
 
 - name: Set ownership for mounted volumes
   file:
@@ -185,6 +187,7 @@
     owner: ubuntu
     group: ubuntu
     mode: '0644'
+    force: yes  # Always update with latest version
 
 - name: Source aliases in .bashrc
   lineinfile:
@@ -226,6 +229,7 @@
       du -sh {{ output_dir }}/* 2>/dev/null | head -5 || echo "  (empty)"
       echo "=========================================="
     mode: '0755'
+    force: yes  # Always update with latest version
 
 - name: Create model download helper script
   copy:
@@ -246,3 +250,4 @@
       echo "📥 Downloading $MODEL to {{ models_dir }}/$MODEL_NAME"
       huggingface-cli download $MODEL --local-dir $MODEL_NAME
     mode: '0755'
+    force: yes  # Always update with latest version

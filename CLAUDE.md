@@ -8,11 +8,12 @@ This repository contains research, analysis, and infrastructure for text-to-vide
 
 ## Infrastructure Status
 
-**⏳ Waiting for AWS quota approval**
-- Requested: 96 vCPUs for G and VT instances (us-east-2)
-- Target: G5.12xlarge (4x NVIDIA A10G, 96GB VRAM)
-- When approved: run `terraform apply` in `/terraform` directory
-- See: `terraform/README.md` for complete setup instructions
+**✅ AWS Quota Approved - Ready for Production**
+- Approved: 96 vCPUs for G and VT instances (us-east-2) - Granted 2025-11-22
+- Active Configuration: G5.12xlarge with Spot instances (4x NVIDIA A10G, 96GB VRAM)
+- Deployment: Run `make deploy` from project root for complete setup
+- Cost: ~$1.70/hour (Spot) with automatic start/stop via `make start` and `make stop`
+- See: `README.md` for quick start and `terraform/README.md` for detailed instructions
 
 ## Repository Structure
 
