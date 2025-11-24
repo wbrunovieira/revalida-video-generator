@@ -1,0 +1,24 @@
+---
+# Debug PyTorch installation
+- name: Check PyTorch versions and requirements
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    echo "=== HunyuanVideo requirements.txt ==="
+    cat {{ models_dir }}/HunyuanVideo/code/requirements.txt
+    echo ""
+    echo "=== Installed PyTorch versions ==="
+    pip list | grep -E "torch|xformers|flash"
+    echo ""
+    echo "=== Test torchvision import ==="
+    python3 -c "import torch; print(f'PyTorch: {torch.__version__}'); import torchvision; print(f'Torchvision: {torchvision.__version__}')"
+    echo ""
+    echo "=== CUDA version ==="
+    nvidia-smi | grep "CUDA Version"
+  register: debug_output
+  become_user: ubuntu
+  tags: [debug-torch, never]
+
+- name: Display debug output
+  debug:
+    msg: "{{ debug_output.stdout_lines }}"
+  tags: [debug-torch, never]

@@ -22,6 +22,7 @@ with open(config_file, 'r', encoding='utf-8') as f:
 print(f"🎬 Gerando: {config['output_name']}")
 
 # Carregar modelo com offloading para CPU
+# Nota: HoloCine usa VRAM management interno, não suporta multi-GPU nativamente
 device = 'cuda'
 pipe = WanVideoHoloCinePipeline.from_pretrained(
     torch_dtype=torch.bfloat16,

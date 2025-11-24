@@ -7,10 +7,10 @@
     "Wide shot of doctor walking through ward checking on patients"
   ],
   "negative_prompt": "blurry, static, low quality, overexposed, unrealistic",
-  "num_frames": 81,
+  "num_frames": 49,
   "height": 480,
   "width": 832,
-  "steps": 30,
+  "steps": 20,
   "fps": 15,
   "seed": 123
 }

@@ -104,6 +104,36 @@ download-models: ## Download all 3 main models (HoloCine, HunyuanVideo, Wan 2.2)
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags download-models
 
+setup-hunyuan: ## Setup HunyuanVideo (720p, multi-GPU support)
+	@echo "$(CYAN)🎬 Setting up HunyuanVideo...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags setup-hunyuan
+
+test-hunyuan: ## Create HunyuanVideo test script on server
+	@echo "$(CYAN)🧪 Setting up HunyuanVideo test...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags test-hunyuan
+
+debug-torch: ## Debug PyTorch installation and versions
+	@echo "$(CYAN)🔍 Debugging PyTorch installation...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags debug-torch
+
+setup-cogvideox: ## Setup CogVideoX-5B with xDiT (multi-GPU, HD quality)
+	@echo "$(CYAN)🎬 Setting up CogVideoX-5B with xDiT...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags setup-cogvideox
+
+test-cogvideox: ## Create CogVideoX test scripts on server
+	@echo "$(CYAN)🧪 Setting up CogVideoX test...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags test-cogvideox
+
 download-model: ## Download a specific model (usage: make download-model MODEL=tencent/HunyuanVideo)
 	@if [ -z "$(MODEL)" ]; then \
 		echo "$(RED)Error: MODEL not specified$(NC)"; \

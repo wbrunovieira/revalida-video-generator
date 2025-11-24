@@ -29,13 +29,18 @@ ssh -i ~/.ssh/id_rsa ubuntu@18.223.84.101
 # Ativar ambiente
 source /home/ubuntu/video-generation/venv/bin/activate
 
-# Gerar vídeo específico
-python /mnt/output/run_holocine.py /mnt/output/meu_video.json
+# Opção 1: Gerar um vídeo por vez
+python3 /mnt/output/run_holocine.py /mnt/output/meu_video.json
 
-# Ou gerar todos
-cd /mnt/output
-python run_holocine.py aula01_hospital_recepcao.json
-python run_holocine.py aula02_enfermaria.json
+# Opção 2: Gerar múltiplos vídeos em PARALELO (usa todas as 4 GPUs!)
+bash /mnt/output/generate_parallel.sh \
+  /mnt/output/aula01_hospital_recepcao.json \
+  /mnt/output/aula02_enfermaria.json \
+  /mnt/output/aula03_consulta.json \
+  /mnt/output/aula04_exame.json
+
+# Monitorar progresso (em outro terminal)
+watch -n 1 nvidia-smi
 ```
 
 ### 4. Vídeos sincronizam automaticamente

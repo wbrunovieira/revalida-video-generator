@@ -328,6 +328,31 @@
       import_tasks: tasks/download-models.yml
       tags: [download-models, never]  # never = only runs when explicitly requested
 
+    # Run with: ansible-playbook playbook.yml --tags setup-hunyuan
+    - name: Include HunyuanVideo setup tasks
+      import_tasks: tasks/setup-hunyuan.yml
+      tags: [setup-hunyuan, never]  # never = only runs when explicitly requested
+
+    # Run with: ansible-playbook playbook.yml --tags test-hunyuan
+    - name: Include HunyuanVideo test tasks
+      import_tasks: tasks/test-hunyuan.yml
+      tags: [test-hunyuan, never]  # never = only runs when explicitly requested
+
+    # Run with: ansible-playbook playbook.yml --tags debug-torch
+    - name: Include PyTorch debug tasks
+      import_tasks: tasks/debug-torch.yml
+      tags: [debug-torch, never]  # never = only runs when explicitly requested
+
+    # Run with: ansible-playbook playbook.yml --tags setup-cogvideox
+    - name: Include CogVideoX setup tasks
+      import_tasks: tasks/setup-cogvideox.yml
+      tags: [setup-cogvideox, never]  # never = only runs when explicitly requested
+
+    # Run with: ansible-playbook playbook.yml --tags test-cogvideox
+    - name: Include CogVideoX test tasks
+      import_tasks: tasks/test-cogvideox.yml
+      tags: [test-cogvideox, never]  # never = only runs when explicitly requested
+
     # ============================================
     # STEP 8: FINAL CHECKS & DISPLAY
     # ============================================

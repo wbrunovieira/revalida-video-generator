@@ -1,0 +1,125 @@
+---
+# Setup CogVideoX-5B with xDiT for multi-GPU text-to-video generation
+# Run with: ansible-playbook playbook.yml --tags setup-cogvideox
+
+- name: Display CogVideoX setup banner
+  debug:
+    msg: |
+      ==========================================
+      🎬 SETTING UP COGVIDEOX-5B with xDiT
+      ==========================================
+      Features:
+      - 5B parameters (efficient memory usage)
+      - Multi-GPU support via xDiT
+      - 3.91x speedup with 4 GPUs
+      - 49 frames @ 8fps output
+      - HD quality realistic videos
+      - No xformers dependency
+      ==========================================
+
+# ============================================
+# INSTALL COGVIDEOX DEPENDENCIES
+# ============================================
+- name: Install CogVideoX and diffusers
+  pip:
+    name:
+      - diffusers>=0.30.0
+      - transformers>=4.44.2
+      - accelerate>=0.33.0
+      - imageio-ffmpeg
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [setup-cogvideox]
+
+- name: Clone xDiT repository for multi-GPU support
+  git:
+    repo: https://github.com/xdit-project/xDiT.git
+    dest: "{{ models_dir }}/xDiT"
+    version: main
+    force: yes
+  become_user: ubuntu
+  tags: [setup-cogvideox]
+
+- name: Install xDiT in editable mode
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    cd {{ models_dir }}/xDiT
+    pip install -e .
+  become_user: ubuntu
+  tags: [setup-cogvideox]
+  args:
+    executable: /bin/bash
+
+- name: Verify flash-attn is installed
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    pip show flash-attn || echo "flash-attn not found"
+  register: flash_attn_check
+  become_user: ubuntu
+  tags: [setup-cogvideox]
+  args:
+    executable: /bin/bash
+
+- name: Display flash-attn status
+  debug:
+    msg: |
+      Flash Attention: {{ 'Installed ✅' if 'Version' in flash_attn_check.stdout else 'Not found ❌' }}
+  tags: [setup-cogvideox]
+
+# ============================================
+# DOWNLOAD COGVIDEOX-5B MODEL
+# ============================================
+- name: Check if CogVideoX-5b model exists
+  stat:
+    path: "{{ models_dir }}/CogVideoX-5b/model_index.json"
+  register: cogvideox_model_check
+  tags: [setup-cogvideox]
+
+- name: Download CogVideoX-5b model (~10GB)
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    cd {{ models_dir }}
+    echo "📥 Downloading CogVideoX-5b (~10GB, will take 10-20 minutes)..."
+    huggingface-cli download THUDM/CogVideoX-5b --local-dir CogVideoX-5b
+  become_user: ubuntu
+  when: not cogvideox_model_check.stat.exists
+  tags: [setup-cogvideox]
+  args:
+    executable: /bin/bash
+  async: 3600  # 1 hour timeout
+  poll: 30     # Check every 30 seconds
+
+- name: Verify model downloaded successfully
+  stat:
+    path: "{{ models_dir }}/CogVideoX-5b/model_index.json"
+  register: cogvideox_final_check
+  tags: [setup-cogvideox]
+
+- name: Display model download status
+  debug:
+    msg: |
+      CogVideoX-5b model: {{ 'Downloaded ✅' if cogvideox_final_check.stat.exists else 'Failed ❌' }}
+      Location: {{ models_dir }}/CogVideoX-5b/
+  tags: [setup-cogvideox]
+
+# ============================================
+# FINAL STATUS
+# ============================================
+- name: Display CogVideoX setup complete
+  debug:
+    msg: |
+      ==========================================
+      ✅ COGVIDEOX-5B SETUP COMPLETE
+      ==========================================
+      xDiT: {{ models_dir }}/xDiT
+      Model: {{ models_dir }}/CogVideoX-5b/
+
+      Single-GPU test:
+      python3 test_cogvideox_single.py
+
+      Multi-GPU (4 GPUs):
+      torchrun --nproc_per_node=4 \
+        xDiT/examples/cogvideox_example.py \
+        --model {{ models_dir }}/CogVideoX-5b
+      ==========================================
+  tags: [setup-cogvideox]

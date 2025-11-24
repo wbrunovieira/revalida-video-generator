@@ -1,0 +1,123 @@
+---
+# Setup HunyuanVideo for text-to-video generation
+# Run with: ansible-playbook playbook.yml --tags setup-hunyuan
+
+- name: Display HunyuanVideo setup banner
+  debug:
+    msg: |
+      ==========================================
+      🎬 SETTING UP HUNYUANVIDEO
+      ==========================================
+      Features:
+      - Native 720p support (HD quality)
+      - Multi-GPU support (4x A10G)
+      - ~8 min per video with 4 GPUs
+      - 129 frames (~5 seconds @ 24fps)
+      ==========================================
+
+# ============================================
+# CLONE HUNYUANVIDEO REPOSITORY
+# ============================================
+- name: Clone HunyuanVideo repository
+  git:
+    repo: https://github.com/Tencent-Hunyuan/HunyuanVideo.git
+    dest: "{{ models_dir }}/HunyuanVideo/code"
+    version: main
+    force: yes
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+
+# ============================================
+# INSTALL DEPENDENCIES
+# ============================================
+- name: Uninstall existing PyTorch packages
+  pip:
+    name:
+      - torch
+      - torchvision
+      - torchaudio
+    state: absent
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+  ignore_errors: yes
+
+- name: Install PyTorch 2.6.0 from PyPI (includes CUDA support)
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+  args:
+    executable: /bin/bash
+
+- name: Install Flash Attention 2 (prebuilt wheel for PyTorch 2.6)
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.3/flash_attn-2.7.3+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+  args:
+    executable: /bin/bash
+
+- name: Install HunyuanVideo requirements (excluding xformers)
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    grep -v "^xformers" {{ models_dir }}/HunyuanVideo/code/requirements.txt > /tmp/requirements_no_xformers.txt
+    pip install -r /tmp/requirements_no_xformers.txt
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+  args:
+    executable: /bin/bash
+
+- name: Completely remove xformers to avoid compatibility issues
+  pip:
+    name: xformers
+    state: absent
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+  ignore_errors: yes
+
+- name: Install xFuser for multi-GPU support
+  pip:
+    name: xfuser==0.4.0
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+
+# ============================================
+# VERIFY MODEL FILES
+# ============================================
+- name: Check if HunyuanVideo model files exist
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo/model_index.json"
+  register: hunyuan_model_check
+  tags: [setup-hunyuan]
+
+- name: Display model status
+  debug:
+    msg: |
+      Model files: {{ 'Found ✅' if hunyuan_model_check.stat.exists else 'Not found ❌' }}
+      Location: {{ models_dir }}/HunyuanVideo/
+  tags: [setup-hunyuan]
+
+# ============================================
+# FINAL STATUS
+# ============================================
+- name: Display HunyuanVideo setup complete
+  debug:
+    msg: |
+      ==========================================
+      ✅ HUNYUANVIDEO SETUP COMPLETE
+      ==========================================
+      Repository: {{ models_dir }}/HunyuanVideo/code
+      Models: {{ models_dir }}/HunyuanVideo/
+
+      Multi-GPU command:
+      torchrun --nproc_per_node=4 sample_video.py \
+        --video-size 720 1280 \
+        --ulysses-degree 4 \
+        --prompt "Your prompt here"
+      ==========================================
+  tags: [setup-hunyuan]
