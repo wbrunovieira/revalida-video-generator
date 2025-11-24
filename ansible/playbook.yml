@@ -50,6 +50,42 @@
     # ============================================
     # STEP 2: MOUNT EBS VOLUMES
     # ============================================
+
+    # Check if nvme1n1 is being used by LVM (Deep Learning AMI default)
+    - name: Check if models volume is part of LVM
+      shell: pvdisplay /dev/nvme1n1 2>/dev/null || echo "not_lvm"
+      register: lvm_check
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Unmount LVM volume if present
+      mount:
+        path: /opt/dlami/nvme
+        state: unmounted
+      when: "'not_lvm' not in lvm_check.stdout"
+      ignore_errors: yes
+
+    - name: Remove LVM logical volume
+      lvol:
+        vg: vg.01
+        lv: lv_ephemeral
+        state: absent
+        force: yes
+      when: "'not_lvm' not in lvm_check.stdout"
+      ignore_errors: yes
+
+    - name: Remove LVM volume group
+      lvg:
+        vg: vg.01
+        state: absent
+      when: "'not_lvm' not in lvm_check.stdout"
+      ignore_errors: yes
+
+    - name: Remove LVM physical volume
+      command: pvremove -ff /dev/nvme1n1
+      when: "'not_lvm' not in lvm_check.stdout"
+      ignore_errors: yes
+
     - name: Check if models volume is formatted
       shell: file -s /dev/nvme1n1
       register: models_volume_check
@@ -60,7 +96,8 @@
       filesystem:
         fstype: ext4
         dev: /dev/nvme1n1
-      when: "'ext4' not in models_volume_check.stdout"
+        force: yes
+      when: "'ext4' not in models_volume_check.stdout and ': data' in models_volume_check.stdout"
 
     - name: Check if output volume is formatted
       shell: file -s /dev/nvme2n1
@@ -72,7 +109,8 @@
       filesystem:
         fstype: ext4
         dev: /dev/nvme2n1
-      when: "'ext4' not in output_volume_check.stdout"
+        force: yes
+      when: "'ext4' not in output_volume_check.stdout and ': data' in output_volume_check.stdout"
 
     - name: Create mount points
       file:
@@ -165,12 +203,24 @@
         virtualenv: "{{ app_dir }}/venv"
       become_user: ubuntu
 
-    - name: Install ML packages in venv
+    # Install PyTorch first (required by xformers)
+    - name: Install PyTorch packages
       pip:
         name:
           - torch
           - torchvision
           - torchaudio
+        virtualenv: "{{ app_dir }}/venv"
+      become_user: ubuntu
+
+    - name: Display PyTorch install complete
+      debug:
+        msg: "✅ PyTorch installed successfully"
+
+    # Install remaining ML packages (including xformers which needs torch)
+    - name: Install remaining ML packages
+      pip:
+        name:
           - diffusers
           - transformers
           - accelerate
@@ -184,13 +234,10 @@
           - ipykernel
         virtualenv: "{{ app_dir }}/venv"
       become_user: ubuntu
-      async: 3600
-      poll: 0
-      register: pip_install
 
-    - name: Display pip install note
+    - name: Display ML packages install complete
       debug:
-        msg: "📦 ML packages installation started in background (may take 10-20 minutes)"
+        msg: "✅ All ML packages installed successfully"
 
     # ============================================
     # STEP 5: BASH ALIASES & HELPERS
@@ -278,7 +325,7 @@
     # ============================================
     # Run with: ansible-playbook playbook.yml --tags download-models
     - name: Include model download tasks
-      include_tasks: tasks/download-models.yml
+      import_tasks: tasks/download-models.yml
       tags: [download-models, never]  # never = only runs when explicitly requested
 
     # ============================================
