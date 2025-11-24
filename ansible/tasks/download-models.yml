@@ -18,6 +18,34 @@
       ==========================================
 
 # ============================================
+# CONFIGURE HUGGING FACE CACHE
+# ============================================
+- name: Remove old Hugging Face cache from home directory
+  file:
+    path: /home/ubuntu/.cache/huggingface
+    state: absent
+  become_user: ubuntu
+  tags: [download-models]
+
+- name: Create Hugging Face cache directory in /mnt/models
+  file:
+    path: "{{ models_dir }}/.cache"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [download-models]
+
+- name: Set HF_HOME environment variable in ubuntu's profile
+  lineinfile:
+    path: /home/ubuntu/.profile
+    line: 'export HF_HOME=/mnt/models/.cache'
+    create: yes
+    owner: ubuntu
+    group: ubuntu
+  tags: [download-models]
+
+# ============================================
 # HOLOCINE MODEL
 # ============================================
 - name: Create HoloCine directories
@@ -28,53 +56,105 @@
     group: ubuntu
     mode: '0755'
   loop:
-    - checkpoints/Wan2.2-T2V-A14B
+    - checkpoints/Wan2.2-T2V-A14B/Wan2.2-T2V-A14B
     - checkpoints/HoloCine_dit/full
     - checkpoints/HoloCine_dit/sparse
+  tags: [download-models]
 
-- name: Download Wan 2.2 VAE and T5 for HoloCine
+- name: Download complete Wan 2.2 model for HoloCine
   shell: |
+    export HF_HOME={{ models_dir }}/.cache
     . {{ app_dir }}/venv/bin/activate
     huggingface-cli download Wan-AI/Wan2.2-T2V-A14B \
-      --local-dir {{ models_dir }}/HoloCine/checkpoints/Wan2.2-T2V-A14B \
-      --include "models_t5_*.pth" --include "Wan2.1_VAE.pth"
+      --local-dir {{ models_dir }}/HoloCine/checkpoints/Wan2.2-T2V-A14B/Wan2.2-T2V-A14B
   become_user: ubuntu
   args:
     executable: /bin/bash
-    creates: "{{ models_dir }}/HoloCine/checkpoints/Wan2.2-T2V-A14B/Wan2.1_VAE.pth"
+    creates: "{{ models_dir }}/HoloCine/checkpoints/Wan2.2-T2V-A14B/Wan2.2-T2V-A14B/models_t5_umt5-xxl-enc-bf16.pth"
+  tags: [download-models]
 
 - name: Download HoloCine DiT checkpoints (full attention)
   shell: |
+    export HF_HOME={{ models_dir }}/.cache
     . {{ app_dir }}/venv/bin/activate
     huggingface-cli download hlwang06/HoloCine \
-      --local-dir {{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/full \
-      --include "full_*.safetensors"
+      HoloCine_dit/full/full_high_noise.safetensors \
+      HoloCine_dit/full/full_low_noise.safetensors \
+      --local-dir {{ models_dir }}/HoloCine/checkpoints \
+      --local-dir-use-symlinks False
   become_user: ubuntu
   args:
     executable: /bin/bash
     creates: "{{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/full/full_high_noise.safetensors"
+  tags: [download-models]
 
 - name: Download HoloCine DiT checkpoints (sparse attention)
   shell: |
+    export HF_HOME={{ models_dir }}/.cache
     . {{ app_dir }}/venv/bin/activate
     huggingface-cli download hlwang06/HoloCine \
-      --local-dir {{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/sparse \
-      --include "sparse_*.safetensors"
+      HoloCine_dit/sparse/sparse_high_noise.safetensors \
+      HoloCine_dit/sparse/sparse_low_noise.safetensors \
+      --local-dir {{ models_dir }}/HoloCine/checkpoints \
+      --local-dir-use-symlinks False
   become_user: ubuntu
   args:
     executable: /bin/bash
     creates: "{{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/sparse/sparse_high_noise.safetensors"
+  tags: [download-models]
 
 - name: Clone HoloCine repository
   git:
     repo: https://github.com/yihao-meng/HoloCine.git
     dest: "{{ models_dir }}/HoloCine/code"
     version: main
+    force: yes
   become_user: ubuntu
+  tags: [download-models]
+
+- name: Create symlink from code/checkpoints to checkpoints directory
+  file:
+    src: "{{ models_dir }}/HoloCine/checkpoints"
+    dest: "{{ models_dir }}/HoloCine/code/checkpoints"
+    state: link
+    owner: ubuntu
+    group: ubuntu
+  tags: [download-models]
+
+- name: Remove old backup of HoloCine inference file if exists
+  file:
+    path: "{{ models_dir }}/HoloCine/code/HoloCine_inference_full_attention.py.bak"
+    state: absent
+  tags: [download-models]
+
+- name: Restore HoloCine inference file from git
+  shell: |
+    cd {{ models_dir }}/HoloCine/code
+    git checkout HoloCine_inference_full_attention.py
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  ignore_errors: yes
+  tags: [download-models]
+
+- name: Fix HoloCine to prevent double pipeline creation (comment lines 188-999)
+  shell: |
+    sed -i.bak '188,999s/^/# /' {{ models_dir }}/HoloCine/code/HoloCine_inference_full_attention.py
+  args:
+    creates: "{{ models_dir }}/HoloCine/code/HoloCine_inference_full_attention.py.bak"
+  tags: [download-models]
+
+- name: Install HoloCine Python requirements
+  pip:
+    requirements: "{{ models_dir }}/HoloCine/code/requirements.txt"
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [download-models, install-holocine-deps]
 
 - name: Display HoloCine download complete
   debug:
     msg: "✅ HoloCine downloaded successfully"
+  tags: [download-models]
 
 # ============================================
 # HUNYUANVIDEO MODEL
@@ -86,9 +166,11 @@
     owner: ubuntu
     group: ubuntu
     mode: '0755'
+  tags: [download-models]
 
 - name: Download HunyuanVideo model
   shell: |
+    export HF_HOME={{ models_dir }}/.cache
     . {{ app_dir }}/venv/bin/activate
     huggingface-cli download tencent/HunyuanVideo \
       --local-dir {{ models_dir }}/HunyuanVideo
@@ -96,10 +178,12 @@
   args:
     executable: /bin/bash
     creates: "{{ models_dir }}/HunyuanVideo/model_index.json"
+  tags: [download-models]
 
 - name: Display HunyuanVideo download complete
   debug:
     msg: "✅ HunyuanVideo downloaded successfully"
+  tags: [download-models]
 
 # ============================================
 # WAN 2.2 MODEL
@@ -111,9 +195,11 @@
     owner: ubuntu
     group: ubuntu
     mode: '0755'
+  tags: [download-models]
 
 - name: Download Wan 2.2 complete model
   shell: |
+    export HF_HOME={{ models_dir }}/.cache
     . {{ app_dir }}/venv/bin/activate
     huggingface-cli download Wan-AI/Wan2.2-T2V-A14B \
       --local-dir {{ models_dir }}/Wan2.2
@@ -121,10 +207,12 @@
   args:
     executable: /bin/bash
     creates: "{{ models_dir }}/Wan2.2/models_t5_umt5-xxl-enc-bf16.pth"
+  tags: [download-models]
 
 - name: Display Wan 2.2 download complete
   debug:
     msg: "✅ Wan 2.2 downloaded successfully"
+  tags: [download-models]
 
 # ============================================
 # FINAL STATUS
@@ -133,6 +221,7 @@
   shell: du -sh {{ models_dir }}/* 2>/dev/null || echo "0"
   register: models_size
   changed_when: false
+  tags: [download-models]
 
 - name: Display final download status
   debug:
@@ -149,3 +238,4 @@
       - docs/HUNYUANVIDEO.md
       - docs/WAN22.md
       ==========================================
+  tags: [download-models]

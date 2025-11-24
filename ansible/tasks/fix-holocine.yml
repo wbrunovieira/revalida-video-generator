@@ -1,0 +1,9 @@
+---
+# Fix HoloCine inference file to prevent double pipeline creation
+- name: Comment out module-level pipeline creation in HoloCine
+  lineinfile:
+    path: "{{ models_dir }}/HoloCine/code/HoloCine_inference_full_attention.py"
+    regexp: '^(pipe = WanVideoHoloCinePipeline\.from_pretrained\(|pipe\.enable_vram_management\(\)|pipe\.to\(device\))'
+    line: '# \1  # Commented by ansible to prevent double pipeline creation'
+    backrefs: yes
+  tags: [fix-holocine]

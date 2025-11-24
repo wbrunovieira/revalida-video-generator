@@ -1,0 +1,16 @@
+{
+  "output_name": "aula01_hospital_recepcao",
+  "global_caption": "A professional Italian doctor in white medical coat arriving at modern hospital reception area with natural lighting and professional environment",
+  "shot_captions": [
+    "Wide shot of hospital entrance and reception area, bright and welcoming atmosphere",
+    "Medium shot of Italian doctor walking confidently through automatic doors",
+    "Close-up of doctor approaching the reception desk with friendly expression"
+  ],
+  "negative_prompt": "blurry, static, low quality, overexposed, unrealistic",
+  "num_frames": 49,
+  "height": 480,
+  "width": 832,
+  "steps": 20,
+  "fps": 15,
+  "seed": 42
+}
