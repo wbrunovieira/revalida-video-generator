@@ -117,6 +117,11 @@ Takes ~15-20 minutes on first run.
 - `make download-model MODEL=<name>` - Download specific AI model
 - `make logs` - View deployment logs
 
+### Video Sync
+- `make sync-videos` - Sync videos from server to ~/Videos/revalida/
+- `make setup-auto-sync` - Enable automatic sync (every 5 min)
+- `make remove-auto-sync` - Disable automatic sync
+
 ### Development
 - `make validate` - Validate Terraform config
 - `make fmt` - Format Terraform files
@@ -191,9 +196,31 @@ python HoloCine_inference_full_attention.py
 ```
 
 ### Copy Videos to Local
+
+**Option 1: Manual sync (on-demand)**
 ```bash
-scp -i ~/.ssh/id_rsa ubuntu@<IP>:/mnt/output/*.mp4 ~/Downloads/
+make sync-videos
 ```
+
+**Option 2: Automatic sync (every 5 minutes)**
+```bash
+# Enable auto-sync
+make setup-auto-sync
+
+# Disable auto-sync
+make remove-auto-sync
+
+# Check sync logs
+tail -f /tmp/revalida-sync.log
+```
+
+**Videos location:** `~/Videos/revalida/`
+
+**How it works:**
+- Uses `rsync` with `--ignore-existing` (doesn't re-download)
+- Preserves file timestamps and permissions
+- Shows progress during transfer
+- Only downloads new videos (efficient)
 
 ## 📁 Project Structure
 

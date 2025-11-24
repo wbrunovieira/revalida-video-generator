@@ -114,6 +114,27 @@ download-model: ## Download a specific model (usage: make download-model MODEL=t
 		IP=$$(terraform output -raw public_ip 2>/dev/null) && \
 		ssh -i ~/.ssh/id_rsa ubuntu@$$IP "download-model $(MODEL)"
 
+sync-videos: ## Sync videos from server to local machine
+	@echo "$(CYAN)📥 Syncing videos from server...$(NC)"
+	@mkdir -p ~/Videos/revalida
+	@cd terraform && \
+		IP=$$(terraform output -raw public_ip 2>/dev/null) && \
+		rsync -avz --progress --ignore-existing -e "ssh -i ~/.ssh/id_rsa" \
+			ubuntu@$$IP:/mnt/output/ ~/Videos/revalida/ && \
+		echo "$(GREEN)✅ Videos synced to ~/Videos/revalida/$(NC)"
+
+setup-auto-sync: ## Setup automatic video sync (runs every 5 minutes)
+	@echo "$(CYAN)⚙️  Setting up automatic video sync...$(NC)"
+	@(crontab -l 2>/dev/null | grep -v "revalida-video-sync"; \
+		echo "*/5 * * * * cd $(PWD) && make sync-videos >> /tmp/revalida-sync.log 2>&1") | crontab -
+	@echo "$(GREEN)✅ Auto-sync configured (every 5 minutes)$(NC)"
+	@echo "$(YELLOW)Logs: /tmp/revalida-sync.log$(NC)"
+
+remove-auto-sync: ## Remove automatic video sync
+	@echo "$(YELLOW)Removing automatic video sync...$(NC)"
+	@crontab -l 2>/dev/null | grep -v "revalida-video-sync" | crontab -
+	@echo "$(GREEN)✅ Auto-sync removed$(NC)"
+
 # Development helpers
 init: ## Initialize Terraform
 	@cd terraform && terraform init
