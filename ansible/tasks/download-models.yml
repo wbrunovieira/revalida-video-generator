@@ -37,7 +37,7 @@
     . {{ app_dir }}/venv/bin/activate
     huggingface-cli download Wan-AI/Wan2.2-T2V-A14B \
       --local-dir {{ models_dir }}/HoloCine/checkpoints/Wan2.2-T2V-A14B \
-      --allow-patterns "models_t5_*.pth" "Wan2.1_VAE.pth"
+      --include "models_t5_*.pth" --include "Wan2.1_VAE.pth"
   become_user: ubuntu
   args:
     executable: /bin/bash
@@ -46,9 +46,9 @@
 - name: Download HoloCine DiT checkpoints (full attention)
   shell: |
     . {{ app_dir }}/venv/bin/activate
-    huggingface-cli download yihao-meng/HoloCine \
+    huggingface-cli download hlwang06/HoloCine \
       --local-dir {{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/full \
-      --allow-patterns "full_*.safetensors"
+      --include "full_*.safetensors"
   become_user: ubuntu
   args:
     executable: /bin/bash
@@ -57,9 +57,9 @@
 - name: Download HoloCine DiT checkpoints (sparse attention)
   shell: |
     . {{ app_dir }}/venv/bin/activate
-    huggingface-cli download yihao-meng/HoloCine \
+    huggingface-cli download hlwang06/HoloCine \
       --local-dir {{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/sparse \
-      --allow-patterns "sparse_*.safetensors"
+      --include "sparse_*.safetensors"
   become_user: ubuntu
   args:
     executable: /bin/bash
