@@ -113,7 +113,8 @@ Takes ~15-20 minutes on first run.
 
 ### Server Operations
 - `make video-status` - Show detailed server status
-- `make download-model MODEL=<name>` - Download AI model
+- `make download-models` - Download all 3 main models (~75GB, 30-60 min)
+- `make download-model MODEL=<name>` - Download specific AI model
 - `make logs` - View deployment logs
 
 ### Development
@@ -141,6 +142,19 @@ cdoutput              # Go to /mnt/output
 ```
 
 ### Download AI Models
+
+**Option 1: Download all 3 main models automatically**
+```bash
+# From your local machine (recommended)
+make download-models
+```
+
+This downloads:
+- **HoloCine** (~30GB) - Multi-shot with character consistency
+- **HunyuanVideo** (~25GB) - Best quality, supports LoRA
+- **Wan 2.2** (~20GB) - Most versatile (T2V + I2V)
+
+**Option 2: Download specific model**
 ```bash
 # From your local machine
 make download-model MODEL=tencent/HunyuanVideo
@@ -153,6 +167,13 @@ download-model THUDM/CogVideoX-5b
 ```
 
 ### Generate Videos
+
+**Quick start guides for each model:**
+- 📖 **[HoloCine](docs/HOLOCINE.md)** - Multi-shot narrative videos
+- 📖 **[HunyuanVideo](docs/HUNYUANVIDEO.md)** - Highest quality, LoRA support
+- 📖 **[Wan 2.2](docs/WAN22.md)** - Text-to-Video & Image-to-Video
+
+**Example workflow:**
 ```bash
 # SSH into server
 make ssh
@@ -160,8 +181,13 @@ make ssh
 # Activate Python
 venv
 
-# Your generation code here
-python generate_video.py
+# Generate with HunyuanVideo
+cd /mnt/output
+python generate_hunyuan.py
+
+# Or use HoloCine for multi-shot
+cd /mnt/models/HoloCine/code
+python HoloCine_inference_full_attention.py
 ```
 
 ### Copy Videos to Local

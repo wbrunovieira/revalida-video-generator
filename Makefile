@@ -97,7 +97,14 @@ video-status: ## Show detailed server status (requires server running)
 		IP=$$(terraform output -raw public_ip 2>/dev/null) && \
 		ssh -i ~/.ssh/id_rsa ubuntu@$$IP "video-status"
 
-download-model: ## Download a model (usage: make download-model MODEL=tencent/HunyuanVideo)
+download-models: ## Download all 3 main models (HoloCine, HunyuanVideo, Wan 2.2)
+	@echo "$(CYAN)📥 Downloading main AI models...$(NC)"
+	@echo "$(YELLOW)⚠️  This will download ~75GB and take 30-60 minutes$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags download-models
+
+download-model: ## Download a specific model (usage: make download-model MODEL=tencent/HunyuanVideo)
 	@if [ -z "$(MODEL)" ]; then \
 		echo "$(RED)Error: MODEL not specified$(NC)"; \
 		echo "Usage: make download-model MODEL=tencent/HunyuanVideo"; \

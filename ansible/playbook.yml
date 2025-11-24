@@ -274,7 +274,15 @@
         mode: '0755'
 
     # ============================================
-    # STEP 7: FINAL CHECKS & DISPLAY
+    # STEP 7: DOWNLOAD AI MODELS (Optional)
+    # ============================================
+    # Run with: ansible-playbook playbook.yml --tags download-models
+    - name: Include model download tasks
+      include_tasks: tasks/download-models.yml
+      tags: [download-models, never]  # never = only runs when explicitly requested
+
+    # ============================================
+    # STEP 8: FINAL CHECKS & DISPLAY
     # ============================================
     - name: Get disk space
       shell: df -h /

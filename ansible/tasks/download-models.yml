@@ -1,0 +1,146 @@
+---
+# Download AI models for video generation
+# This task downloads the 3 main models: HoloCine, HunyuanVideo, and Wan 2.2
+# Run with: ansible-playbook playbook.yml --tags download-models
+
+- name: Display model download banner
+  debug:
+    msg: |
+      ==========================================
+      📥 DOWNLOADING AI MODELS
+      ==========================================
+      This will download ~75GB of models:
+      1. HoloCine (~30GB)
+      2. HunyuanVideo (~25GB)
+      3. Wan 2.2 (~20GB)
+
+      This may take 30-60 minutes depending on connection
+      ==========================================
+
+# ============================================
+# HOLOCINE MODEL
+# ============================================
+- name: Create HoloCine directories
+  file:
+    path: "{{ models_dir }}/HoloCine/{{ item }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  loop:
+    - checkpoints/Wan2.2-T2V-A14B
+    - checkpoints/HoloCine_dit/full
+    - checkpoints/HoloCine_dit/sparse
+
+- name: Download Wan 2.2 VAE and T5 for HoloCine
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    huggingface-cli download Wan-AI/Wan2.2-T2V-A14B \
+      --local-dir {{ models_dir }}/HoloCine/checkpoints/Wan2.2-T2V-A14B \
+      --allow-patterns "models_t5_*.pth" "Wan2.1_VAE.pth"
+  become_user: ubuntu
+  args:
+    creates: "{{ models_dir }}/HoloCine/checkpoints/Wan2.2-T2V-A14B/Wan2.1_VAE.pth"
+
+- name: Download HoloCine DiT checkpoints (full attention)
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    huggingface-cli download yihao-meng/HoloCine \
+      --local-dir {{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/full \
+      --allow-patterns "full_*.safetensors"
+  become_user: ubuntu
+  args:
+    creates: "{{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/full/full_high_noise.safetensors"
+
+- name: Download HoloCine DiT checkpoints (sparse attention)
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    huggingface-cli download yihao-meng/HoloCine \
+      --local-dir {{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/sparse \
+      --allow-patterns "sparse_*.safetensors"
+  become_user: ubuntu
+  args:
+    creates: "{{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/sparse/sparse_high_noise.safetensors"
+
+- name: Clone HoloCine repository
+  git:
+    repo: https://github.com/yihao-meng/HoloCine.git
+    dest: "{{ models_dir }}/HoloCine/code"
+    version: main
+  become_user: ubuntu
+
+- name: Display HoloCine download complete
+  debug:
+    msg: "✅ HoloCine downloaded successfully"
+
+# ============================================
+# HUNYUANVIDEO MODEL
+# ============================================
+- name: Create HunyuanVideo directory
+  file:
+    path: "{{ models_dir }}/HunyuanVideo"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Download HunyuanVideo model
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    huggingface-cli download tencent/HunyuanVideo \
+      --local-dir {{ models_dir }}/HunyuanVideo
+  become_user: ubuntu
+  args:
+    creates: "{{ models_dir }}/HunyuanVideo/model_index.json"
+
+- name: Display HunyuanVideo download complete
+  debug:
+    msg: "✅ HunyuanVideo downloaded successfully"
+
+# ============================================
+# WAN 2.2 MODEL
+# ============================================
+- name: Create Wan 2.2 directory
+  file:
+    path: "{{ models_dir }}/Wan2.2"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Download Wan 2.2 complete model
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    huggingface-cli download Wan-AI/Wan2.2-T2V-A14B \
+      --local-dir {{ models_dir }}/Wan2.2
+  become_user: ubuntu
+  args:
+    creates: "{{ models_dir }}/Wan2.2/models_t5_umt5-xxl-enc-bf16.pth"
+
+- name: Display Wan 2.2 download complete
+  debug:
+    msg: "✅ Wan 2.2 downloaded successfully"
+
+# ============================================
+# FINAL STATUS
+# ============================================
+- name: Get models directory size
+  shell: du -sh {{ models_dir }}/* 2>/dev/null || echo "0"
+  register: models_size
+  changed_when: false
+
+- name: Display final download status
+  debug:
+    msg: |
+      ==========================================
+      ✅ ALL MODELS DOWNLOADED SUCCESSFULLY
+      ==========================================
+      Models location: {{ models_dir }}
+      {{ models_size.stdout }}
+      ==========================================
+
+      See documentation in docs/ for usage instructions:
+      - docs/HOLOCINE.md
+      - docs/HUNYUANVIDEO.md
+      - docs/WAN22.md
+      ==========================================
