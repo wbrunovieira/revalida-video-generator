@@ -1,6 +1,6 @@
 # Revalida Video Generator
 
-AWS-based infrastructure for self-hosted AI video generation using models like HunyuanVideo, HoloCine, and CogVideoX.
+AWS-based infrastructure for self-hosted AI video generation using models like HunyuanVideo, HoloCine, CogVideoX, and Ovi.
 
 ## 🚀 Quick Start
 
@@ -158,6 +158,7 @@ This downloads:
 - **HoloCine** (~30GB) - Multi-shot with character consistency
 - **HunyuanVideo** (~25GB) - Best quality, supports LoRA
 - **Wan 2.2** (~20GB) - Most versatile (T2V + I2V)
+- **Ovi** (~70GB) - Video + synchronized audio generation
 
 **Option 2: Download specific model**
 ```bash
@@ -169,6 +170,7 @@ ssh ubuntu@<IP>
 download-model tencent/HunyuanVideo
 download-model yihao-meng/HoloCine
 download-model THUDM/CogVideoX-5b
+download-model feizhengcong/Ovi
 ```
 
 ### Generate Videos
@@ -177,6 +179,7 @@ download-model THUDM/CogVideoX-5b
 - 📖 **[HoloCine](docs/HOLOCINE.md)** - Multi-shot narrative videos
 - 📖 **[HunyuanVideo](docs/HUNYUANVIDEO.md)** - Highest quality, LoRA support
 - 📖 **[Wan 2.2](docs/WAN22.md)** - Text-to-Video & Image-to-Video
+- 📖 **[Ovi](#ovi-video--audio)** - Video with synchronized audio
 
 **Example workflow:**
 ```bash
@@ -193,6 +196,48 @@ python generate_hunyuan.py
 # Or use HoloCine for multi-shot
 cd /mnt/models/HoloCine/code
 python HoloCine_inference_full_attention.py
+```
+
+### Ovi (Video + Audio)
+
+Ovi generates **video with synchronized audio** in a single pass - perfect for videos with speech, music, or sound effects.
+
+**Setup Ovi:**
+```bash
+# From local machine
+make setup-ovi
+```
+
+**Generate video+audio:**
+```bash
+# SSH into server
+make ssh
+venv
+
+# Use the helper script
+~/video-generation/ovi_generate.sh "A person speaking in a modern office. Audio: Professional male voice saying 'Welcome to our presentation' with soft background music"
+```
+
+**Prompt format:**
+- Describe the video scene first
+- Add `Audio:` followed by audio description
+- For 720x720 model, audio uses `<AUDCAP>...</ENDAUDCAP>` tags (auto-converted)
+- For 960x960 model, use `Audio: ...` format directly
+
+**Available models:**
+| Model | Resolution | Duration | Use Case |
+|-------|------------|----------|----------|
+| `720x720_5s` | 720×720 | 5 seconds | Default, FP8 quantization available |
+| `960x960_5s` | 960×960 | 5 seconds | Higher quality |
+| `960x960_10s` | 960×960 | 10 seconds | Longer videos |
+
+**Example prompts:**
+```bash
+# Doctor speaking
+~/video-generation/ovi_generate.sh "Medium shot of doctor in white coat, hospital background. Audio: Warm male voice saying 'Hello, I am Doctor Smith' with ambient hospital sounds"
+
+# Nature scene with music
+~/video-generation/ovi_generate.sh "Beautiful sunset over ocean waves. Audio: Calm piano melody with gentle wave sounds"
 ```
 
 ### Copy Videos to Local
@@ -262,6 +307,11 @@ Based on analysis in `docs/analise-modelos-text-to-video.md`:
 **Most Versatile:**
 - Wan 2.2 (supports both text-to-video and image-to-video)
 
+**Best for Video + Audio:**
+- Ovi (720×720 or 960×960, 5-10s)
+- Generates synchronized audio with video in single pass
+- Perfect for speech, narration, music, sound effects
+
 ## 💡 Tips
 
 ### Daily Workflow
@@ -326,4 +376,4 @@ MIT
 
 **Created with:** Terraform + Ansible + Make
 **GPU:** NVIDIA A10G (4x on G5.12xlarge)
-**Models:** HunyuanVideo, HoloCine, CogVideoX, and more
+**Models:** HunyuanVideo, HoloCine, CogVideoX, Ovi
