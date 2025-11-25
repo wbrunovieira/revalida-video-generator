@@ -353,6 +353,21 @@
       import_tasks: tasks/test-cogvideox.yml
       tags: [test-cogvideox, never]  # never = only runs when explicitly requested
 
+    # Run with: ansible-playbook playbook.yml --tags setup-ovi
+    - name: Include Ovi setup tasks
+      import_tasks: tasks/setup-ovi.yml
+      tags: [setup-ovi, never]  # never = only runs when explicitly requested
+
+    # Run with: ansible-playbook playbook.yml --tags test-ovi
+    - name: Include Ovi test tasks
+      import_tasks: tasks/test-ovi.yml
+      tags: [test-ovi, never]  # never = only runs when explicitly requested
+
+    # Run with: ansible-playbook playbook.yml --tags fix-ovi-helper
+    - name: Fix Ovi helper scripts
+      import_tasks: tasks/fix-ovi-helper.yml
+      tags: [fix-ovi-helper, never]  # never = only runs when explicitly requested
+
     # ============================================
     # STEP 8: FINAL CHECKS & DISPLAY
     # ============================================

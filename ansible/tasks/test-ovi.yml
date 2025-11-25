@@ -1,0 +1,175 @@
+---
+# Test Ovi setup and generate test videos with audio
+# Run with: ansible-playbook playbook.yml --tags test-ovi
+
+- name: Display Ovi test banner
+  debug:
+    msg: |
+      ==========================================
+      🧪 OVI TEST SETUP
+      ==========================================
+      This will create simple test scripts to verify
+      Ovi video+audio generation is working.
+      ==========================================
+  tags: [test-ovi, never]
+
+- name: Create Ovi quick test script
+  copy:
+    dest: /mnt/output/test_ovi_quick.sh
+    content: |
+      #!/bin/bash
+      # Quick Ovi Test - Single GPU with FP8
+
+      cd /mnt/models/Ovi-code
+      source /home/ubuntu/video-generation/venv/bin/activate
+
+      echo "=========================================="
+      echo "🎬 OVI QUICK TEST (FP8 + CPU Offload)"
+      echo "=========================================="
+      echo ""
+      echo "This will generate a 5-second video with audio"
+      echo "Time: ~2-3 minutes on single A10G GPU"
+      echo ""
+
+      PROMPT="Italian doctor in white coat examining medical charts in modern hospital, professional quality. Audio: Soft professional medical office ambiance with subtle background music"
+
+      python3 inference.py \
+        --config-file ovi/configs/inference/inference_24gb.yaml \
+        --text-prompt "$PROMPT"
+
+      echo ""
+      echo "=========================================="
+      echo "✅ TEST COMPLETE!"
+      echo "=========================================="
+      echo "Output files:"
+      ls -lh /mnt/output/*.mp4 | tail -3
+      echo "=========================================="
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [test-ovi, never]
+
+- name: Create Ovi Gradio test launcher
+  copy:
+    dest: /mnt/output/test_ovi_gradio.sh
+    content: |
+      #!/bin/bash
+      # Launch Ovi Gradio UI for interactive testing
+
+      cd /mnt/models/Ovi-code
+      source /home/ubuntu/video-generation/venv/bin/activate
+
+      PUBLIC_IP=$(curl -s ifconfig.me)
+
+      echo "=========================================="
+      echo "🎨 STARTING OVI GRADIO UI"
+      echo "=========================================="
+      echo ""
+      echo "Optimized for 24GB VRAM (FP8 + CPU offload)"
+      echo ""
+      echo "Access the UI at:"
+      echo "  http://${PUBLIC_IP}:7860"
+      echo ""
+      echo "Or from localhost:"
+      echo "  http://localhost:7860"
+      echo ""
+      echo "Press Ctrl+C to stop"
+      echo "=========================================="
+      echo ""
+
+      python3 gradio_app.py --cpu_offload --fp8 --share
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [test-ovi, never]
+
+- name: Create Ovi test menu
+  copy:
+    dest: /mnt/output/test_ovi.sh
+    content: |
+      #!/bin/bash
+      # Ovi Test Menu
+
+      echo "=========================================="
+      echo "🎬 OVI TEST MENU"
+      echo "=========================================="
+      echo ""
+      echo "Choose test mode:"
+      echo "1. Quick CLI test (2-3 minutes)"
+      echo "2. Gradio UI (interactive, browser-based)"
+      echo "3. Custom prompt"
+      echo ""
+      read -p "Enter choice [1-3]: " choice
+
+      case $choice in
+        1)
+          echo ""
+          /mnt/output/test_ovi_quick.sh
+          ;;
+        2)
+          echo ""
+          /mnt/output/test_ovi_gradio.sh
+          ;;
+        3)
+          echo ""
+          read -p "Enter your video prompt: " VIDEO_PROMPT
+          read -p "Enter your audio description: " AUDIO_DESC
+
+          cd /mnt/models/Ovi-code
+          source /home/ubuntu/video-generation/venv/bin/activate
+
+          FULL_PROMPT="${VIDEO_PROMPT}. Audio: ${AUDIO_DESC}"
+
+          echo ""
+          echo "🎬 Generating: $FULL_PROMPT"
+          echo ""
+
+          python3 inference.py \
+            --config-file ovi/configs/inference/inference_24gb.yaml \
+            --text-prompt "$FULL_PROMPT"
+
+          echo ""
+          echo "✅ Complete! Check /mnt/output/"
+          ls -lh /mnt/output/*.mp4 | tail -3
+          ;;
+        *)
+          echo "Invalid choice. Please run again and select 1-3."
+          exit 1
+          ;;
+      esac
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [test-ovi, never]
+
+- name: Display Ovi test instructions
+  debug:
+    msg: |
+      ==========================================
+      📋 OVI TEST SCRIPTS READY
+      ==========================================
+
+      SSH into server and run:
+
+      🎬 Interactive menu:
+      /mnt/output/test_ovi.sh
+
+      ⚡ Quick CLI test:
+      /mnt/output/test_ovi_quick.sh
+
+      🎨 Gradio UI:
+      /mnt/output/test_ovi_gradio.sh
+
+      📝 Helper scripts:
+      ~/video-generation/ovi_generate.sh "Your prompt. Audio: audio"
+      ~/video-generation/ovi_gradio.sh
+
+      Expected performance:
+      - Generation time: 2-3 minutes (5s video)
+      - VRAM usage: ~24GB (with FP8 + CPU offload)
+      - Output: 720x720 or 960x960 @ 24fps
+      - Audio: Synchronized with video
+
+      Output directory: /mnt/output/
+      ==========================================
+  tags: [test-ovi, never]

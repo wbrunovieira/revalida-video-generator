@@ -134,6 +134,24 @@ test-cogvideox: ## Create CogVideoX test scripts on server
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags test-cogvideox
 
+setup-ovi: ## Setup Ovi (video+audio, multi-GPU, FP8 quantization)
+	@echo "$(CYAN)🎬 Setting up Ovi (Video+Audio)...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags setup-ovi
+
+test-ovi: ## Create Ovi test scripts on server
+	@echo "$(CYAN)🧪 Setting up Ovi test...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags test-ovi
+
+fix-ovi: ## Fix Ovi helper scripts (run if prompts not working)
+	@echo "$(CYAN)🔧 Fixing Ovi helper scripts...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags fix-ovi-helper
+
 download-model: ## Download a specific model (usage: make download-model MODEL=tencent/HunyuanVideo)
 	@if [ -z "$(MODEL)" ]; then \
 		echo "$(RED)Error: MODEL not specified$(NC)"; \

@@ -4,162 +4,148 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains research, analysis, and infrastructure for text-to-video AI models, focused on professional video production using self-hosted solutions on AWS. The primary analysis compares models like HoloCine-14B, HunyuanVideo, and Wan 2.2 against commercial alternatives like OpenAI Sora.
+AWS infrastructure and automation for self-hosted AI video generation using models like HunyuanVideo, HoloCine, CogVideoX, and Ovi. Uses G5.12xlarge instances (4x NVIDIA A10G, 96GB VRAM) with Spot pricing (~$1.70/hour).
 
-## Infrastructure Status
+## Common Commands
 
-**✅ AWS Quota Approved - Ready for Production**
-- Approved: 96 vCPUs for G and VT instances (us-east-2) - Granted 2025-11-22
-- Active Configuration: G5.12xlarge with Spot instances (4x NVIDIA A10G, 96GB VRAM)
-- Deployment: Run `make deploy` from project root for complete setup
-- Cost: ~$1.70/hour (Spot) with automatic start/stop via `make start` and `make stop`
-- See: `README.md` for quick start and `terraform/README.md` for detailed instructions
+```bash
+# Deployment & Management
+make deploy              # Complete deployment (Terraform + Ansible)
+make start               # Start stopped server
+make stop                # Stop server (saves costs!)
+make status              # Show server status
+make ssh                 # SSH into server
+
+# Model Setup (run after deploy)
+make download-models     # Download all 3 main models (~75GB)
+make setup-hunyuan       # Setup HunyuanVideo (720p, multi-GPU)
+make setup-cogvideox     # Setup CogVideoX-5B with xDiT
+make setup-ovi           # Setup Ovi (video+audio generation)
+
+# Video Sync
+make sync-videos         # Sync videos to ~/Videos/revalida/
+make setup-auto-sync     # Enable automatic sync (every 5 min)
+
+# Terraform
+make terraform-plan      # Preview infrastructure changes
+make terraform-apply     # Apply Terraform changes only
+make validate            # Validate Terraform config
+make fmt                 # Format Terraform files
+
+# Debug & Testing
+make debug-torch         # Debug PyTorch installation
+make test-hunyuan        # Create HunyuanVideo test script
+make test-cogvideox      # Create CogVideoX test script
+make test-ovi            # Create Ovi test script
+```
 
 ## Repository Structure
 
 ```
 revalida-video-generator/
-├── terraform/               # AWS infrastructure as code
-│   ├── README.md           # Setup instructions and troubleshooting
-│   ├── *.tf                # Terraform configuration files
-│   ├── terraform.tfvars    # Configuration variables (gitignored)
-│   ├── terraform.tfvars.example  # Template for configuration
-│   └── ansible.tf          # Ansible integration
-├── ansible/                 # Server configuration automation
-│   ├── README.md           # Ansible documentation
-│   ├── playbook.yml        # Main setup playbook
-│   ├── inventory.tpl       # Inventory template (for Terraform)
-│   ├── inventory.yml       # Generated inventory (gitignored)
-│   └── files/
-│       └── bashrc-additions.sh  # Bash aliases and helpers
-├── docs/
-│   └── analise-modelos-text-to-video.md  # Comprehensive analysis document (Portuguese)
-├── .gitignore              # Protects sensitive data
-└── CLAUDE.md               # This file
+├── Makefile                 # All management commands
+├── terraform/               # AWS infrastructure (EC2, EBS, IAM, Security Groups)
+├── ansible/
+│   ├── deploy.yml          # Orchestrator: Terraform + start instance + configure
+│   ├── playbook.yml        # Server setup: packages, volumes, Python env
+│   └── tasks/              # Tagged tasks for specific models
+│       ├── setup-hunyuan.yml
+│       ├── setup-cogvideox.yml
+│       ├── setup-ovi.yml
+│       └── download-models.yml
+├── video_configs/           # JSON configs for HoloCine batch generation
+├── generate_parallel.sh     # Multi-GPU parallel video generation
+└── docs/
+    ├── analise-modelos-text-to-video.md  # Model analysis (Portuguese)
+    ├── HOLOCINE.md          # HoloCine usage guide
+    ├── HUNYUANVIDEO.md      # HunyuanVideo usage guide
+    └── WAN22.md             # Wan 2.2 usage guide
 ```
 
-## Document Architecture
+## Architecture
 
-The main analysis document (`analise-modelos-text-to-video.md`) is structured as:
+### Deployment Flow
 
-1. **Executive Summary & TL;DR** - Quick decision-making information with cost comparisons
-2. **Model Comparative Analysis** - Detailed technical specifications, VRAM requirements, quality ratings
-3. **Top 3 Recommended Models**:
-   - HoloCine-14B: Multi-shot narratives with consistent characters
-   - HunyuanVideo + LoRA: Best visual quality (720p native, 30 FPS)
-   - Wan 2.2: Best versatility
-4. **AWS Cost Analysis** - Instance configurations (G5.12xlarge), Spot vs On-Demand pricing
-5. **Production Setup Guide** - Complete installation and deployment instructions
-6. **Use Case Recommendations** - Scenario-based model selection
-7. **Implementation Plan** - Phased rollout strategy
-8. **Commercial Comparisons** - ROI analysis vs Sora, Runway, Pika Labs
-9. **FAQ Section** - 12 common questions with detailed answers
-10. **Resources & Conclusion** - Links to GitHub repos, papers, tools
+1. **Terraform** creates AWS infrastructure (EC2, EBS volumes, IAM, Security Groups, Elastic IP)
+2. **Ansible deploy.yml** orchestrates: runs Terraform → starts instance → waits for SSH → runs playbook
+3. **Ansible playbook.yml** configures server: mounts EBS, installs packages, creates Python venv
 
-## Key Technical Concepts
+### Server Directories
 
-### Models Analyzed
+- `/mnt/models` - AI model weights (500GB EBS volume, persists across stops)
+- `/mnt/output` - Generated videos (100GB EBS volume)
+- `/home/ubuntu/video-generation/venv` - Python virtual environment
 
-- **HoloCine-14B**: Only model with native multi-shot support (up to 60s), Window Cross-Attention architecture
-- **HunyuanVideo**: 13B parameters, 3D Causal VAE, supports LoRA training for character consistency
-- **Wan 2.2**: MoE (Mixture-of-Experts) architecture, supports both T2V and I2V
-- **CogVideoX-5B, Mochi-1, LTX-Video**: Alternative models with various trade-offs
+### Ansible Tag System
 
-### AWS Infrastructure
+Model setup tasks use Ansible tags. Each task file has `tags: [tag-name, never]` so it only runs when explicitly requested:
 
-- **Primary Instance**: G5.12xlarge (4x NVIDIA A10G, 96GB VRAM total)
-- **Pricing Strategy**: Spot instances (~$1.70/hour, 70% savings vs On-Demand)
-- **Cost Efficiency**: $0.28-0.42 per video vs $6-30 for Sora (93-98% cheaper)
-- **Production Capacity**: 4-6 videos/hour (96-144 videos/day)
+```bash
+# How the tags work
+make setup-cogvideox  # Runs: ansible-playbook playbook.yml --tags setup-cogvideox
+make test-hunyuan     # Runs: ansible-playbook playbook.yml --tags test-hunyuan
+```
 
-### Character Consistency Approaches
+## Adding a New Model
 
-1. **HoloCine**: Native multi-shot with Sparse Inter-Shot Self-Attention
-2. **HunyuanVideo**: LoRA training workflow (generate 30 reference images → train LoRA → apply to all videos)
-3. **Others**: Workarounds with limited reliability
+1. Create `ansible/tasks/setup-<model>.yml` with installation steps
+2. Create `ansible/tasks/test-<model>.yml` with test script creation
+3. Add import statements to `ansible/playbook.yml`:
+   ```yaml
+   - name: Include <model> setup tasks
+     import_tasks: tasks/setup-<model>.yml
+     tags: [setup-<model>, never]
+   ```
+4. Add Makefile targets:
+   ```makefile
+   setup-<model>: ## Setup <model> description
+   	@cd ansible && ansible-playbook -i inventory.yml playbook.yml --tags setup-<model>
+   ```
+5. Add usage guide at `docs/<MODEL>.md`
 
-## Document Maintenance Guidelines
+## Server Commands (via SSH)
 
-### When Updating Analysis
+After `make ssh`, these aliases are available:
+- `video-status` - System overview (GPU, disk, memory)
+- `venv` - Activate Python venv
+- `download-model <name>` - Download from HuggingFace (e.g., `download-model tencent/HunyuanVideo`)
+- `gpuwatch` - Monitor GPU usage
+- `cdmodels` / `cdoutput` - Navigate to directories
 
-1. **Model Specifications**: Update tables when new models are released or specs change
-2. **AWS Pricing**: Verify G5 instance prices quarterly (Spot prices fluctuate)
-3. **Benchmark Scores**: Add new comparative benchmarks when available
-4. **Commercial Comparisons**: Update Sora/Runway/Pika pricing when APIs change
+## Video Generation Workflow
 
-### Document Language
+### HoloCine Multi-Shot (via JSON configs)
 
-The analysis is written in **Portuguese (Brazilian)** for the target audience. Maintain this language when adding content or making updates.
+```bash
+# 1. Create config in video_configs/
+cp video_configs/template.json video_configs/my_video.json
 
-### Version Control
+# 2. Copy to server
+scp video_configs/*.json ubuntu@<IP>:/mnt/output/
 
-- Document includes changelog at the bottom
-- Use semantic versioning (e.g., v2.1)
-- Document major changes: model additions, pricing updates, new setup procedures
+# 3. Generate (on server)
+python3 /mnt/output/run_holocine.py /mnt/output/my_video.json
 
-## Common Tasks
+# Or parallel generation using all 4 GPUs:
+bash /mnt/output/generate_parallel.sh config1.json config2.json config3.json config4.json
+```
 
-### Adding a New Model Analysis
+### CogVideoX with xDiT (multi-GPU)
 
-1. Add to comparison table in Section 1.1 (specifications)
-2. Add quality ratings in Section 1.2
-3. Add character consistency evaluation in Section 1.3
-4. If top-tier, create detailed section in Section 2
-5. Update cost analysis in Section 3.2
-6. Update recommendations in Section 5
-7. Update changelog at bottom
+```bash
+# Single GPU
+python3 test_cogvideox_single.py
 
-### Updating AWS Pricing
+# Multi-GPU (4 GPUs, 3.91x speedup)
+torchrun --nproc_per_node=4 xDiT/examples/cogvideox_example.py --model /mnt/models/CogVideoX-5b
+```
 
-1. Verify current prices at https://aws.amazon.com/ec2/spot/pricing/
-2. Update Section 3.1 (instance specs and pricing)
-3. Recalculate cost per video in Section 3.2
-4. Update ROI calculations in Section 7.3
-5. Update TL;DR section with new economics
+## Key Technical Details
 
-### Adding Setup Instructions
+- **Deep Learning AMI**: Ubuntu base with NVIDIA drivers pre-installed. LVM on nvme1n1 is automatically removed by Ansible to use as models volume.
+- **Spot Instances**: Configured with `instance_interruption_behavior = "stop"` (not terminate) to preserve data.
+- **EBS Volumes**: Persist across instance stops. Only destroyed with `make destroy`.
 
-1. Add to Section 4 (Setup AWS para Produção)
-2. Include complete bash commands
-3. Specify directory structure
-4. List exact checkpoint download locations
-5. Document VRAM requirements clearly
+## Document Language
 
-## Technical Dependencies Referenced
-
-- **CUDA 12.1+**: Required for all production models
-- **FlashAttention-3**: Recommended for HoloCine (FlashAttention-2 as fallback)
-- **PyTorch 2.4+**: Base framework
-- **ComfyUI**: GUI workflow integration
-- **Diffusers (Hugging Face)**: Model loading and inference
-- **FFmpeg**: Video post-processing
-
-## Important Links Structure
-
-Links are organized by category:
-- GitHub repositories (model source code)
-- Hugging Face (model weights and papers)
-- AWS documentation (instance types, AMIs)
-- Tool repositories (ComfyUI, LoRA training, upscalers)
-
-Always use official/canonical URLs to avoid broken links.
-
-## Cost Analysis Methodology
-
-All cost calculations use:
-- **AWS G5.12xlarge Spot pricing**: $1.70/hour baseline
-- **Generation time estimates**: Conservative (actual may be faster)
-- **Commercial API pricing**: Current public rates at time of writing
-- **ROI calculations**: Based on $5-30/video pricing for end customers
-
-When updating costs, maintain consistency across all sections (1, 3, 5, 7, 8).
-
-## Multi-Shot vs Single-Shot Context
-
-This is a critical architectural distinction in the analysis:
-
-- **Multi-shot**: Single generation produces multiple camera angles/scenes with consistent characters (HoloCine only)
-- **Single-shot**: Each generation is one continuous scene
-- **Workaround approach**: Generate multiple single-shots and manually ensure consistency via LoRA
-
-This distinction drives model selection recommendations throughout the document.
+The analysis document (`docs/analise-modelos-text-to-video.md`) is in **Brazilian Portuguese**. Maintain this language when updating.

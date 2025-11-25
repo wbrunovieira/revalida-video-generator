@@ -1,0 +1,119 @@
+---
+# Fix Ovi helper script to properly pass prompts
+# Run with: ansible-playbook playbook.yml --tags fix-ovi-helper
+
+- name: Fix Ovi helper script with correct prompt handling
+  copy:
+    dest: "{{ app_dir }}/ovi_generate.sh"
+    content: |
+      #!/bin/bash
+      # Ovi Video+Audio Generation Helper (FIXED)
+      # Usage: ./ovi_generate.sh "Your prompt here. Audio: Your audio description"
+
+      cd {{ models_dir }}/Ovi-code
+      source {{ app_dir }}/venv/bin/activate
+
+      PROMPT="${1:-Italian doctor in white coat examining medical charts. Audio: Professional medical office ambiance}"
+
+      echo "🎬 Generating video+audio with Ovi..."
+      echo "Prompt: $PROMPT"
+      echo ""
+
+      # Create temporary config with user's prompt
+      TEMP_CONFIG="/tmp/ovi_temp_config_$$.yaml"
+
+      cat > "$TEMP_CONFIG" << EOF
+      # Temporary Ovi Configuration
+      model_name: "720x720_5s"
+      output_dir: "/mnt/output"
+      ckpt_dir: "/mnt/models/Ovi"
+
+      # Generation Quality
+      sample_steps: 50
+      solver_name: "unipc"
+      shift: 5.0
+      seed: 42
+
+      # Guidance
+      audio_guidance_scale: 3.0
+      video_guidance_scale: 4.0
+      slg_layer: 11
+
+      # Performance for 24GB VRAM
+      sp_size: 1
+      cpu_offload: True
+      fp8: True
+
+      # User's prompt
+      text_prompt: "$PROMPT"
+      mode: "t2v"
+      video_frame_height_width: [720, 720]
+      each_example_n_times: 1
+
+      # Quality control
+      video_negative_prompt: "jitter, bad hands, blur, distortion, deformed"
+      audio_negative_prompt: "robotic, muffled, echo, distorted, unclear"
+      EOF
+
+      # Run inference with temporary config
+      python3 inference.py --config-file "$TEMP_CONFIG"
+
+      # Cleanup
+      rm -f "$TEMP_CONFIG"
+
+      echo ""
+      echo "✅ Generation complete! Check /mnt/output/"
+      ls -lh /mnt/output/*.mp4 | tail -5
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [fix-ovi-helper]
+
+- name: Update test_ovi_quick.sh with correct approach
+  copy:
+    dest: /mnt/output/test_ovi_quick.sh
+    content: |
+      #!/bin/bash
+      # Quick Ovi Test - Fixed version
+
+      cd /mnt/models/Ovi-code
+      source /home/ubuntu/video-generation/venv/bin/activate
+
+      echo "=========================================="
+      echo "🎬 OVI QUICK TEST (FP8 + CPU Offload)"
+      echo "=========================================="
+      echo ""
+      echo "Generating 5-second video with audio..."
+      echo ""
+
+      # Use the base config (already has a default prompt)
+      python3 inference.py --config-file ovi/configs/inference/inference_24gb.yaml
+
+      echo ""
+      echo "=========================================="
+      echo "✅ TEST COMPLETE!"
+      echo "=========================================="
+      ls -lh /mnt/output/*.mp4 | tail -3
+      echo "=========================================="
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [fix-ovi-helper]
+
+- name: Display fix complete message
+  debug:
+    msg: |
+      ==========================================
+      ✅ OVI HELPER SCRIPTS FIXED
+      ==========================================
+
+      The scripts now properly create temporary
+      YAML configs with your custom prompts.
+
+      Test with:
+      ~/video-generation/ovi_generate.sh "Your prompt. Audio: audio"
+
+      Or use the base config:
+      /mnt/output/test_ovi_quick.sh
+      ==========================================
+  tags: [fix-ovi-helper]
