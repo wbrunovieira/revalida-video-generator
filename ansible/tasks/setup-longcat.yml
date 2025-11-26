@@ -133,12 +133,180 @@
 # ============================================
 # CREATE HELPER SCRIPTS
 # ============================================
+- name: Create LongCat T2V custom script with CPU offloading
+  copy:
+    dest: "{{ models_dir }}/LongCat-Video-code/run_t2v_a10g.py"
+    content: |
+      #!/usr/bin/env python3
+      """
+      LongCat Text-to-Video with CPU offloading for A10G GPUs (24GB)
+      Optimized to fit 13.6B model on 4x A10G
+      """
+      import os
+      import sys
+      import argparse
+      import datetime
+      import gc
+      import PIL.Image
+      import numpy as np
+
+      import torch
+      import torch.distributed as dist
+
+      from transformers import AutoTokenizer, UMT5EncoderModel
+      from torchvision.io import write_video
+
+      from longcat_video.pipeline_longcat_video import LongCatVideoPipeline
+      from longcat_video.modules.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
+      from longcat_video.modules.autoencoder_kl_wan import AutoencoderKLWan
+      from longcat_video.modules.longcat_video_dit import LongCatVideoTransformer3DModel
+      from longcat_video.context_parallel import context_parallel_util
+      from longcat_video.context_parallel.context_parallel_util import init_context_parallel
+
+
+      def torch_gc():
+          gc.collect()
+          torch.cuda.empty_cache()
+          torch.cuda.ipc_collect()
+
+
+      def generate(args):
+          prompt = args.prompt
+          negative_prompt = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"
+
+          checkpoint_dir = args.checkpoint_dir
+          context_parallel_size = args.context_parallel_size
+          output_dir = args.output_dir
+
+          # Prepare distributed environment
+          rank = int(os.environ.get('RANK', 0))
+          num_gpus = torch.cuda.device_count()
+          local_rank = rank % num_gpus
+          torch.cuda.set_device(local_rank)
+
+          if num_gpus > 1:
+              dist.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=3600*24))
+              global_rank = dist.get_rank()
+              num_processes = dist.get_world_size()
+          else:
+              global_rank = 0
+              num_processes = 1
+
+          # Initialize context parallel
+          init_context_parallel(context_parallel_size=context_parallel_size, global_rank=global_rank, world_size=num_processes)
+          cp_size = context_parallel_util.get_cp_size()
+          cp_split_hw = context_parallel_util.get_optimal_split(cp_size)
+
+          print(f"[Rank {local_rank}] Loading models with CPU offloading...")
+
+          # Load tokenizer (small, keep on CPU)
+          tokenizer = AutoTokenizer.from_pretrained(checkpoint_dir, subfolder="tokenizer")
+
+          # Load text encoder to CPU first, move to GPU only when needed
+          text_encoder = UMT5EncoderModel.from_pretrained(
+              checkpoint_dir,
+              subfolder="text_encoder",
+              torch_dtype=torch.bfloat16,
+              low_cpu_mem_usage=True
+          )
+
+          # Load VAE with low memory
+          vae = AutoencoderKLWan.from_pretrained(
+              checkpoint_dir,
+              subfolder="vae",
+              torch_dtype=torch.bfloat16,
+              low_cpu_mem_usage=True
+          )
+
+          # Load scheduler
+          scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+              checkpoint_dir,
+              subfolder="scheduler"
+          )
+
+          # Load DiT with CPU offloading - this is the big one
+          print(f"[Rank {local_rank}] Loading DiT model (13.6B params)...")
+          dit = LongCatVideoTransformer3DModel.from_pretrained(
+              checkpoint_dir,
+              subfolder="dit",
+              cp_split_hw=cp_split_hw,
+              torch_dtype=torch.bfloat16,
+              low_cpu_mem_usage=True
+          )
+
+          # Create pipeline
+          pipe = LongCatVideoPipeline(
+              tokenizer=tokenizer,
+              text_encoder=text_encoder,
+              vae=vae,
+              scheduler=scheduler,
+              dit=dit,
+          )
+
+          # Enable CPU offload for the pipeline
+          print(f"[Rank {local_rank}] Enabling sequential CPU offload...")
+          pipe.enable_sequential_cpu_offload(gpu_id=local_rank)
+
+          torch_gc()
+
+          global_seed = 42
+          seed = global_seed + global_rank
+          generator = torch.Generator(device=f"cuda:{local_rank}")
+          generator.manual_seed(seed)
+
+          print(f"[Rank {local_rank}] Generating video...")
+          print(f"[Rank {local_rank}] Prompt: {prompt[:100]}...")
+
+          # Generate at 480p first (less memory)
+          output = pipe.generate_t2v(
+              prompt=prompt,
+              negative_prompt=negative_prompt,
+              height=480,
+              width=832,
+              num_frames=93,
+              num_inference_steps=50,
+              guidance_scale=4.0,
+              generator=generator,
+          )[0]
+
+          if local_rank == 0:
+              os.makedirs(output_dir, exist_ok=True)
+              output_tensor = torch.from_numpy(np.array(output))
+              output_tensor = (output_tensor * 255).clamp(0, 255).to(torch.uint8)
+              output_path = os.path.join(output_dir, "longcat_t2v_480p.mp4")
+              write_video(output_path, output_tensor, fps=15, video_codec="libx264", options={"crf": "18"})
+              print(f"✅ Saved: {output_path}")
+
+          del output
+          torch_gc()
+
+          if num_gpus > 1:
+              dist.destroy_process_group()
+
+
+      def main():
+          parser = argparse.ArgumentParser()
+          parser.add_argument("--context_parallel_size", type=int, default=1)
+          parser.add_argument("--checkpoint_dir", type=str, required=True)
+          parser.add_argument("--prompt", type=str, required=True)
+          parser.add_argument("--output_dir", type=str, default="{{ output_dir }}")
+          args = parser.parse_args()
+          generate(args)
+
+
+      if __name__ == "__main__":
+          main()
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [setup-longcat]
+
 - name: Create LongCat T2V helper script
   copy:
     dest: "{{ app_dir }}/longcat_t2v.sh"
     content: |
       #!/bin/bash
-      # LongCat Text-to-Video generation
+      # LongCat Text-to-Video generation with CPU offloading
       # Usage: longcat_t2v.sh "your prompt here" [num_gpus]
 
       PROMPT="${1:-A cat walking on the beach at sunset}"
@@ -147,34 +315,30 @@
       source {{ app_dir }}/venv/bin/activate
       cd {{ models_dir }}/LongCat-Video-code
 
-      echo "🐱 Generating video with LongCat..."
+      echo "🐱 Generating video with LongCat (CPU offload mode)..."
       echo "Prompt: $PROMPT"
       echo "GPUs: $NUM_GPUS"
       echo ""
 
-      # Backup original script
-      cp run_demo_text_to_video.py run_demo_text_to_video.py.bak
+      # Clear GPU memory first
+      python3 -c "import torch; torch.cuda.empty_cache()" 2>/dev/null
 
-      # Replace prompt in script (escape special characters for sed)
-      ESCAPED_PROMPT=$(echo "$PROMPT" | sed 's/[&/\]/\\&/g' | sed "s/'/\\\\'/g")
-      sed -i "s|prompt = \".*\"|prompt = \"$ESCAPED_PROMPT\"|" run_demo_text_to_video.py
+      # Set memory optimization environment variables
+      export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-      # Run generation
-      torchrun --nproc_per_node=$NUM_GPUS run_demo_text_to_video.py \
-        --context_parallel_size=$NUM_GPUS \
-        --checkpoint_dir={{ models_dir }}/LongCat-Video
-
-      # Restore original script
-      mv run_demo_text_to_video.py.bak run_demo_text_to_video.py
-
-      # Move outputs to /mnt/output with timestamp
-      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-      for f in output_t2v*.mp4; do
-        if [ -f "$f" ]; then
-          mv "$f" "{{ output_dir }}/longcat_${TIMESTAMP}_${f}"
-          echo "✅ Saved: {{ output_dir }}/longcat_${TIMESTAMP}_${f}"
-        fi
-      done
+      # Run with custom A10G-optimized script
+      if [ "$NUM_GPUS" -eq 1 ]; then
+        python3 run_t2v_a10g.py \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      else
+        torchrun --nproc_per_node=$NUM_GPUS run_t2v_a10g.py \
+          --context_parallel_size=$NUM_GPUS \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      fi
 
       echo ""
       echo "✅ Done! Check {{ output_dir }}/"
