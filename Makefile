@@ -1,7 +1,7 @@
 # Makefile for Video Generation Server Management
 # Centralizes all deployment and management commands
 
-.PHONY: help deploy start stop status ssh destroy terraform-plan ansible-only
+.PHONY: help deploy start start-g5 start-p3dn stop status ssh destroy terraform-plan ansible-only
 
 # Default target
 .DEFAULT_GOAL := help
@@ -28,9 +28,82 @@ deploy: ## Complete deployment (Terraform + Ansible)
 	@echo "$(CYAN)🚀 Starting complete deployment...$(NC)"
 	@cd ansible && ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.yml deploy.yml
 
-start: ## Start the server if stopped
+start: ## Start the server (interactive instance selection)
 	@echo "$(CYAN)▶️  Starting server...$(NC)"
-	@cd ansible && ansible-playbook deploy.yml --tags instance
+	@echo ""
+	@echo "$(YELLOW)Select instance type:$(NC)"
+	@echo ""
+	@echo "  $(GREEN)1)$(NC) g5.12xlarge  - 4x A10G (24GB each) - ~$$1.70/h spot"
+	@echo "     $(CYAN)Best for: Ovi, HunyuanVideo, HoloCine, CogVideoX$(NC)"
+	@echo ""
+	@echo "  $(GREEN)2)$(NC) p3dn.24xlarge - 8x V100 (32GB each) - ~$$10/h spot"
+	@echo "     $(CYAN)Best for: LongCat-Video (requires 32GB+ VRAM/GPU)$(NC)"
+	@echo ""
+	@read -p "Choice [1-2, default=1]: " choice; \
+	case "$$choice" in \
+		2) \
+			echo "$(YELLOW)Switching to p3dn.24xlarge...$(NC)"; \
+			$(MAKE) start-p3dn; \
+			;; \
+		*) \
+			echo "$(GREEN)Using g5.12xlarge...$(NC)"; \
+			$(MAKE) start-g5; \
+			;; \
+	esac
+
+start-g5: ## Start with g5.12xlarge (4x A10G, 24GB each)
+	@echo "$(CYAN)▶️  Starting g5.12xlarge...$(NC)"
+	@cd terraform && \
+		CURRENT_TYPE=$$(terraform output -raw instance_type 2>/dev/null || echo "none"); \
+		if [ "$$CURRENT_TYPE" != "g5.12xlarge" ]; then \
+			echo "$(YELLOW)Instance type change detected. Switching instance...$(NC)"; \
+			INSTANCE_ID=$$(terraform output -raw instance_id 2>/dev/null); \
+			if [ -n "$$INSTANCE_ID" ]; then \
+				echo "$(YELLOW)Stopping current instance...$(NC)"; \
+				aws ec2 stop-instances --instance-ids $$INSTANCE_ID --region us-east-2 --profile bruno-admin-revalida-aws >/dev/null 2>&1 || true; \
+				echo "$(YELLOW)Waiting for instance to stop (max 3 min)...$(NC)"; \
+				aws ec2 wait instance-stopped --instance-ids $$INSTANCE_ID --region us-east-2 --profile bruno-admin-revalida-aws 2>/dev/null || true; \
+			fi; \
+			sed -i.bak 's/instance_type *= *"[^"]*"/instance_type = "g5.12xlarge"/' terraform.tfvars 2>/dev/null || \
+			echo 'instance_type = "g5.12xlarge"' >> terraform.tfvars; \
+			terraform apply -auto-approve; \
+		else \
+			INSTANCE_ID=$$(terraform output -raw instance_id 2>/dev/null); \
+			aws ec2 start-instances \
+				--instance-ids $$INSTANCE_ID \
+				--region us-east-2 \
+				--profile bruno-admin-revalida-aws; \
+			echo "$(YELLOW)Waiting for instance to start...$(NC)"; \
+			aws ec2 wait instance-running --instance-ids $$INSTANCE_ID --region us-east-2 --profile bruno-admin-revalida-aws; \
+		fi && \
+		echo "$(GREEN)✅ g5.12xlarge ready$(NC)"
+
+start-p3dn: ## Start with p3dn.24xlarge (8x V100, 32GB each) - for LongCat
+	@echo "$(CYAN)▶️  Starting p3dn.24xlarge...$(NC)"
+	@cd terraform && \
+		CURRENT_TYPE=$$(terraform output -raw instance_type 2>/dev/null || echo "none"); \
+		if [ "$$CURRENT_TYPE" != "p3dn.24xlarge" ]; then \
+			echo "$(YELLOW)Instance type change detected. Switching instance...$(NC)"; \
+			INSTANCE_ID=$$(terraform output -raw instance_id 2>/dev/null); \
+			if [ -n "$$INSTANCE_ID" ]; then \
+				echo "$(YELLOW)Stopping current instance...$(NC)"; \
+				aws ec2 stop-instances --instance-ids $$INSTANCE_ID --region us-east-2 --profile bruno-admin-revalida-aws >/dev/null 2>&1 || true; \
+				echo "$(YELLOW)Waiting for instance to stop (max 3 min)...$(NC)"; \
+				aws ec2 wait instance-stopped --instance-ids $$INSTANCE_ID --region us-east-2 --profile bruno-admin-revalida-aws 2>/dev/null || true; \
+			fi; \
+			sed -i.bak 's/instance_type *= *"[^"]*"/instance_type = "p3dn.24xlarge"/' terraform.tfvars 2>/dev/null || \
+			echo 'instance_type = "p3dn.24xlarge"' >> terraform.tfvars; \
+			terraform apply -auto-approve; \
+		else \
+			INSTANCE_ID=$$(terraform output -raw instance_id 2>/dev/null); \
+			aws ec2 start-instances \
+				--instance-ids $$INSTANCE_ID \
+				--region us-east-2 \
+				--profile bruno-admin-revalida-aws; \
+			echo "$(YELLOW)Waiting for instance to start...$(NC)"; \
+			aws ec2 wait instance-running --instance-ids $$INSTANCE_ID --region us-east-2 --profile bruno-admin-revalida-aws; \
+		fi && \
+		echo "$(GREEN)✅ p3dn.24xlarge ready$(NC)"
 
 stop: ## Stop the server to save costs
 	@echo "$(YELLOW)⏸  Stopping server...$(NC)"
@@ -54,10 +127,20 @@ status: ## Show server status
 			--output text) && \
 		IP=$$(terraform output -raw public_ip 2>/dev/null) && \
 		TYPE=$$(terraform output -raw instance_type 2>/dev/null) && \
-		echo "  Instance ID: $$INSTANCE_ID" && \
-		echo "  State:       $$STATE" && \
-		echo "  IP:          $$IP" && \
-		echo "  Type:        $$TYPE"
+		COST=$$(terraform output -raw instance_cost_estimate 2>/dev/null) && \
+		GPU=$$(terraform output -raw gpu_info 2>/dev/null) && \
+		echo "" && \
+		echo "  $(GREEN)Instance:$(NC)  $$TYPE" && \
+		echo "  $(GREEN)State:$(NC)     $$STATE" && \
+		echo "  $(GREEN)IP:$(NC)        $$IP" && \
+		echo "  $(GREEN)GPU:$(NC)       $$GPU" && \
+		echo "  $(GREEN)Cost:$(NC)      $$COST" && \
+		echo "" && \
+		if [ "$$TYPE" = "g5.12xlarge" ]; then \
+			echo "  $(CYAN)Models:$(NC) Ovi, HunyuanVideo, HoloCine, CogVideoX"; \
+		elif [ "$$TYPE" = "p3dn.24xlarge" ]; then \
+			echo "  $(CYAN)Models:$(NC) LongCat-Video + all others"; \
+		fi
 
 ssh: ## SSH into the server
 	@cd terraform && \

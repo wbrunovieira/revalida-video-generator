@@ -56,11 +56,13 @@ output "instance_cost_estimate" {
     var.instance_type == "g5.12xlarge" ? "~$1.70/hour (Spot)" :
     var.instance_type == "g5.24xlarge" ? "~$2.40/hour (Spot)" :
     var.instance_type == "g5.48xlarge" ? "~$4.80/hour (Spot)" :
+    var.instance_type == "p3dn.24xlarge" ? "~$10/hour (Spot)" :
     "Check AWS pricing"
     ) : (
     var.instance_type == "g5.12xlarge" ? "~$5.67/hour (On-Demand)" :
     var.instance_type == "g5.24xlarge" ? "~$8.14/hour (On-Demand)" :
     var.instance_type == "g5.48xlarge" ? "~$16.28/hour (On-Demand)" :
+    var.instance_type == "p3dn.24xlarge" ? "~$31/hour (On-Demand)" :
     "Check AWS pricing"
   )
 }
@@ -70,6 +72,7 @@ output "gpu_info" {
   value = var.instance_type == "g5.12xlarge" ? "4x NVIDIA A10G (24GB each) = 96GB VRAM total" : (
     var.instance_type == "g5.24xlarge" ? "4x NVIDIA A10G (24GB each) = 96GB VRAM total" :
     var.instance_type == "g5.48xlarge" ? "8x NVIDIA A10G (24GB each) = 192GB VRAM total" :
+    var.instance_type == "p3dn.24xlarge" ? "8x NVIDIA V100 (32GB each) = 256GB VRAM total" :
     "Unknown GPU configuration"
   )
 }

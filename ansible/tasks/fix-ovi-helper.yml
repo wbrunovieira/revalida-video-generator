@@ -1,7 +1,159 @@
 ---
-# Fix Ovi helper script to properly pass prompts
+# Fix Ovi helper script and dependencies
 # Run with: ansible-playbook playbook.yml --tags fix-ovi-helper
 
+# ============================================
+# FIX DEPENDENCIES FIRST
+# ============================================
+- name: Remove incompatible xformers
+  pip:
+    name: xformers
+    state: absent
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [fix-ovi-helper]
+  ignore_errors: yes
+
+- name: Install missing Ovi dependencies
+  pip:
+    name:
+      - einops
+      - omegaconf
+      - decord
+      - imageio
+      - imageio-ffmpeg
+      - soundfile
+      - librosa
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [fix-ovi-helper]
+
+- name: Install wheel and ninja (required for flash-attn build)
+  pip:
+    name:
+      - wheel
+      - ninja
+      - packaging
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [fix-ovi-helper]
+
+- name: Uninstall incompatible flash-attn
+  pip:
+    name: flash-attn
+    state: absent
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [fix-ovi-helper]
+  ignore_errors: yes
+
+- name: Install Flash Attention 2 (pre-built wheel for PyTorch 2.6 + CUDA 12.x)
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    pip uninstall flash-attn -y 2>/dev/null || true
+    # Use pre-built wheel matching PyTorch 2.6.0+cu124 with CXX11 ABI=False
+    pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+  become_user: ubuntu
+  tags: [fix-ovi-helper]
+  ignore_errors: yes
+  args:
+    executable: /bin/bash
+
+- name: Display dependency fix status
+  debug:
+    msg: |
+      ✅ Dependencies fixed:
+      - Removed incompatible xformers
+      - Installed einops, omegaconf, decord, etc.
+  tags: [fix-ovi-helper]
+
+# ============================================
+# FIX MODEL PATHS (symlinks if model in /mnt/output)
+# ============================================
+- name: Check if Ovi model exists in /mnt/output
+  stat:
+    path: /mnt/output/Ovi
+  register: ovi_in_output
+  tags: [fix-ovi-helper]
+
+- name: Check if Ovi model exists in /mnt/models
+  stat:
+    path: "{{ models_dir }}/Ovi"
+  register: ovi_in_models
+  tags: [fix-ovi-helper]
+
+- name: Create symlink for Ovi model (output -> models)
+  file:
+    src: /mnt/output/Ovi
+    dest: "{{ models_dir }}/Ovi"
+    state: link
+    owner: ubuntu
+    group: ubuntu
+  when: ovi_in_output.stat.exists and not ovi_in_models.stat.exists
+  tags: [fix-ovi-helper]
+
+- name: Check if Ovi-code exists in /mnt/output
+  stat:
+    path: /mnt/output/Ovi-code
+  register: ovi_code_in_output
+  tags: [fix-ovi-helper]
+
+- name: Check if Ovi-code exists in /mnt/models
+  stat:
+    path: "{{ models_dir }}/Ovi-code"
+  register: ovi_code_in_models
+  tags: [fix-ovi-helper]
+
+- name: Create symlink for Ovi-code (output -> models)
+  file:
+    src: /mnt/output/Ovi-code
+    dest: "{{ models_dir }}/Ovi-code"
+    state: link
+    owner: ubuntu
+    group: ubuntu
+  when: ovi_code_in_output.stat.exists and not ovi_code_in_models.stat.exists
+  tags: [fix-ovi-helper]
+
+- name: Display symlink status
+  debug:
+    msg: |
+      Ovi model symlinks:
+      - /mnt/models/Ovi -> {{ '/mnt/output/Ovi' if ovi_in_output.stat.exists else 'Not found' }}
+      - /mnt/models/Ovi-code -> {{ '/mnt/output/Ovi-code' if ovi_code_in_output.stat.exists else 'Not found' }}
+  tags: [fix-ovi-helper]
+
+# ============================================
+# FIX FP8 CHECKPOINT PATH
+# ============================================
+- name: Check if FP8 weights in root of Ovi dir
+  stat:
+    path: "{{ models_dir }}/Ovi/model_fp8_e4m3fn.safetensors"
+  register: fp8_in_root
+  tags: [fix-ovi-helper]
+
+- name: Check if FP8 weights in Ovi/Ovi subdir
+  stat:
+    path: "{{ models_dir }}/Ovi/Ovi/model_fp8_e4m3fn.safetensors"
+  register: fp8_in_subdir
+  tags: [fix-ovi-helper]
+
+- name: Move FP8 weights to correct location (Ovi/Ovi/)
+  command: mv "{{ models_dir }}/Ovi/model_fp8_e4m3fn.safetensors" "{{ models_dir }}/Ovi/Ovi/model_fp8_e4m3fn.safetensors"
+  become_user: ubuntu
+  when: fp8_in_root.stat.exists and not fp8_in_subdir.stat.exists
+  tags: [fix-ovi-helper]
+
+- name: Display FP8 fix status
+  debug:
+    msg: |
+      FP8 checkpoint location fixed:
+      - Expected: {{ models_dir }}/Ovi/Ovi/model_fp8_e4m3fn.safetensors
+      - Status: {{ 'Already correct' if fp8_in_subdir.stat.exists else ('Moved' if fp8_in_root.stat.exists else 'Not found') }}
+  tags: [fix-ovi-helper]
+
+# ============================================
+# FIX HELPER SCRIPTS
+# ============================================
 - name: Fix Ovi helper script with correct prompt handling
   copy:
     dest: "{{ app_dir }}/ovi_generate.sh"

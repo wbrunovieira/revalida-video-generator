@@ -40,12 +40,19 @@ This project provides **complete automation** for deploying and managing a GPU s
 
 ## 💰 Cost Optimization
 
-- **Running:** ~$1.70/hour (Spot) or ~$5.67/hour (On-Demand)
-- **Stopped:** $0/hour
-- **Storage:** ~$56/month (EBS volumes persist)
+| Instance | Spot | On-Demand | Best For |
+|----------|------|-----------|----------|
+| g5.12xlarge | ~$1.70/h | ~$5.67/h | Ovi, HunyuanVideo, HoloCine |
+| p3dn.24xlarge | ~$10/h | ~$31/h | LongCat-Video |
+
+- **Stopped:** $0/hour (both instances)
+- **Storage:** ~$56/month (EBS volumes persist between switches)
 - **vs Sora:** 93-98% cheaper per video
 
-**💡 Tip:** Use `make stop` when not generating videos!
+**💡 Tips:**
+- Use `make stop` when not generating videos
+- Use g5 (default) for 80% of work, p3dn only for LongCat
+- EBS volumes shared between instances - no re-download needed
 
 ## 📦 Prerequisites
 
@@ -100,10 +107,31 @@ Takes ~15-20 minutes on first run.
 
 ### Deployment & Management
 - `make deploy` - Complete deployment (Terraform + Ansible)
-- `make start` - Start stopped server
+- `make start` - Start server (interactive instance selection)
+- `make start-g5` - Start with g5.12xlarge (4x A10G, 24GB each) - ~$1.70/h
+- `make start-p3dn` - Start with p3dn.24xlarge (8x V100, 32GB each) - ~$10/h
 - `make stop` - Stop server (saves costs!)
-- `make status` - Show server status
+- `make status` - Show server status (instance type, GPU, cost)
 - `make ssh` - SSH into server
+
+### Hybrid Instance Setup
+Switch between instance types based on your needs:
+
+| Instance | GPUs | VRAM/GPU | Cost (Spot) | Best For |
+|----------|------|----------|-------------|----------|
+| g5.12xlarge | 4x A10G | 24GB | ~$1.70/h | Ovi, HunyuanVideo, HoloCine |
+| p3dn.24xlarge | 8x V100 | 32GB | ~$10/h | LongCat-Video |
+
+```bash
+# Interactive selection
+make start
+
+# Or directly
+make start-g5      # Standard usage
+make start-p3dn    # For LongCat (large models)
+```
+
+**Note:** EBS volumes (models + outputs) persist between instance switches.
 
 ### Infrastructure
 - `make terraform-plan` - Preview infrastructure changes

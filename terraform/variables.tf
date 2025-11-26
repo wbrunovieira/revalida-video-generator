@@ -38,9 +38,37 @@ variable "private_key_path" {
 
 # GPU Instance Configuration
 variable "instance_type" {
-  description = "GPU instance type (G5.12xlarge = 4x A10G, 96GB VRAM)"
+  description = "GPU instance type"
   type        = string
-  default     = "g5.12xlarge" # 4x NVIDIA A10G, 96GB VRAM, 192GB RAM
+  default     = "g5.12xlarge"
+}
+
+# Instance presets for easy switching
+variable "instance_presets" {
+  description = "Available instance configurations"
+  type = map(object({
+    type        = string
+    gpus        = string
+    vram_per_gpu = number
+    description = string
+    spot_price  = string
+  }))
+  default = {
+    "g5" = {
+      type         = "g5.12xlarge"
+      gpus         = "4x A10G"
+      vram_per_gpu = 24
+      description  = "Standard - Ovi, HunyuanVideo, HoloCine"
+      spot_price   = "~$1.70/h"
+    }
+    "p3dn" = {
+      type         = "p3dn.24xlarge"
+      gpus         = "8x V100"
+      vram_per_gpu = 32
+      description  = "LongCat - Large models (32GB VRAM/GPU)"
+      spot_price   = "~$10/h"
+    }
+  }
 }
 
 variable "use_spot_instance" {
