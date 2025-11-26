@@ -1,0 +1,319 @@
+---
+# Setup LongCat-Video for T2V, I2V, and Video-Continuation
+# Run with: ansible-playbook playbook.yml --tags setup-longcat
+
+- name: Display LongCat setup banner
+  debug:
+    msg: |
+      ==========================================
+      🐱 SETTING UP LONGCAT-VIDEO
+      ==========================================
+      Features:
+      - 13.6B parameters (dense architecture)
+      - Text-to-Video, Image-to-Video, Video-Continuation
+      - Long video generation (minutes-long)
+      - 720p, 30fps output
+      - Multi-GPU with context parallelism
+      - FlashAttention-2 support
+      ==========================================
+
+# ============================================
+# INSTALL LONGCAT DEPENDENCIES
+# ============================================
+- name: Install LongCat base dependencies
+  pip:
+    name:
+      - ninja
+      - psutil
+      - packaging
+      - einops
+      - omegaconf
+      - decord
+      - imageio
+      - imageio-ffmpeg
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  tags: [setup-longcat]
+
+- name: Check if flash-attn is installed
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    pip show flash-attn || echo "not_installed"
+  register: flash_attn_check
+  become_user: ubuntu
+  changed_when: false
+  tags: [setup-longcat]
+  args:
+    executable: /bin/bash
+
+- name: Install flash-attn if not present
+  pip:
+    name: flash_attn==2.7.4.post1
+    virtualenv: "{{ app_dir }}/venv"
+  become_user: ubuntu
+  when: "'not_installed' in flash_attn_check.stdout"
+  tags: [setup-longcat]
+
+# ============================================
+# CLONE LONGCAT REPOSITORY
+# ============================================
+- name: Clone LongCat-Video repository
+  git:
+    repo: https://github.com/meituan-longcat/LongCat-Video.git
+    dest: "{{ models_dir }}/LongCat-Video-code"
+    version: main
+    force: yes
+  become_user: ubuntu
+  tags: [setup-longcat]
+
+- name: Install LongCat requirements
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    cd {{ models_dir }}/LongCat-Video-code
+    pip install -r requirements.txt
+  become_user: ubuntu
+  tags: [setup-longcat]
+  args:
+    executable: /bin/bash
+  ignore_errors: yes
+
+# ============================================
+# DOWNLOAD LONGCAT MODEL
+# ============================================
+- name: Check if LongCat model exists
+  stat:
+    path: "{{ models_dir }}/LongCat-Video/config.json"
+  register: longcat_model_check
+  tags: [setup-longcat]
+
+- name: Download LongCat-Video model (~27GB)
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    cd {{ models_dir }}
+    echo "📥 Downloading LongCat-Video (~27GB, will take 20-40 minutes)..."
+    huggingface-cli download meituan-longcat/LongCat-Video --local-dir LongCat-Video
+  become_user: ubuntu
+  when: not longcat_model_check.stat.exists
+  tags: [setup-longcat]
+  args:
+    executable: /bin/bash
+  async: 7200  # 2 hour timeout
+  poll: 60    # Check every 60 seconds
+
+- name: Verify model downloaded successfully
+  stat:
+    path: "{{ models_dir }}/LongCat-Video/config.json"
+  register: longcat_final_check
+  tags: [setup-longcat]
+
+- name: Display model download status
+  debug:
+    msg: |
+      LongCat-Video model: {{ 'Downloaded ✅' if longcat_final_check.stat.exists else 'Failed ❌' }}
+      Location: {{ models_dir }}/LongCat-Video/
+  tags: [setup-longcat]
+
+# ============================================
+# CREATE HELPER SCRIPTS
+# ============================================
+- name: Create LongCat T2V helper script
+  copy:
+    dest: "{{ app_dir }}/longcat_t2v.sh"
+    content: |
+      #!/bin/bash
+      # LongCat Text-to-Video generation
+      # Usage: longcat_t2v.sh "your prompt here" [num_gpus]
+
+      PROMPT="${1:-A cat walking on the beach at sunset}"
+      NUM_GPUS="${2:-4}"
+
+      source {{ app_dir }}/venv/bin/activate
+      cd {{ models_dir }}/LongCat-Video-code
+
+      echo "🐱 Generating video with LongCat..."
+      echo "Prompt: $PROMPT"
+      echo "GPUs: $NUM_GPUS"
+      echo ""
+
+      if [ "$NUM_GPUS" -eq 1 ]; then
+        torchrun run_demo_text_to_video.py \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      else
+        torchrun --nproc_per_node=$NUM_GPUS run_demo_text_to_video.py \
+          --context_parallel_size=$NUM_GPUS \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      fi
+
+      echo ""
+      echo "✅ Done! Check {{ output_dir }}/"
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [setup-longcat]
+
+- name: Create LongCat I2V helper script
+  copy:
+    dest: "{{ app_dir }}/longcat_i2v.sh"
+    content: |
+      #!/bin/bash
+      # LongCat Image-to-Video generation
+      # Usage: longcat_i2v.sh "image_path" "your prompt here" [num_gpus]
+
+      IMAGE_PATH="${1}"
+      PROMPT="${2:-A person walking forward}"
+      NUM_GPUS="${3:-4}"
+
+      if [ -z "$IMAGE_PATH" ]; then
+        echo "Usage: longcat_i2v.sh <image_path> [prompt] [num_gpus]"
+        echo "Example: longcat_i2v.sh /mnt/output/character.png 'Doctor walking in hospital'"
+        exit 1
+      fi
+
+      source {{ app_dir }}/venv/bin/activate
+      cd {{ models_dir }}/LongCat-Video-code
+
+      echo "🐱 Generating I2V with LongCat..."
+      echo "Image: $IMAGE_PATH"
+      echo "Prompt: $PROMPT"
+      echo "GPUs: $NUM_GPUS"
+      echo ""
+
+      if [ "$NUM_GPUS" -eq 1 ]; then
+        torchrun run_demo_image_to_video.py \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --image_path "$IMAGE_PATH" \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      else
+        torchrun --nproc_per_node=$NUM_GPUS run_demo_image_to_video.py \
+          --context_parallel_size=$NUM_GPUS \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --image_path "$IMAGE_PATH" \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      fi
+
+      echo ""
+      echo "✅ Done! Check {{ output_dir }}/"
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [setup-longcat]
+
+- name: Create LongCat Video-Continuation helper script
+  copy:
+    dest: "{{ app_dir }}/longcat_continue.sh"
+    content: |
+      #!/bin/bash
+      # LongCat Video-Continuation generation
+      # Usage: longcat_continue.sh "video_path" "your prompt here" [num_gpus]
+
+      VIDEO_PATH="${1}"
+      PROMPT="${2:-Continue the video naturally}"
+      NUM_GPUS="${3:-4}"
+
+      if [ -z "$VIDEO_PATH" ]; then
+        echo "Usage: longcat_continue.sh <video_path> [prompt] [num_gpus]"
+        echo "Example: longcat_continue.sh /mnt/output/scene1.mp4 'Doctor continues explaining'"
+        exit 1
+      fi
+
+      source {{ app_dir }}/venv/bin/activate
+      cd {{ models_dir }}/LongCat-Video-code
+
+      echo "🐱 Continuing video with LongCat..."
+      echo "Video: $VIDEO_PATH"
+      echo "Prompt: $PROMPT"
+      echo "GPUs: $NUM_GPUS"
+      echo ""
+
+      if [ "$NUM_GPUS" -eq 1 ]; then
+        torchrun run_demo_video_continuation.py \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --video_path "$VIDEO_PATH" \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      else
+        torchrun --nproc_per_node=$NUM_GPUS run_demo_video_continuation.py \
+          --context_parallel_size=$NUM_GPUS \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --video_path "$VIDEO_PATH" \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      fi
+
+      echo ""
+      echo "✅ Done! Check {{ output_dir }}/"
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [setup-longcat]
+
+- name: Create LongCat Long-Video helper script
+  copy:
+    dest: "{{ app_dir }}/longcat_long.sh"
+    content: |
+      #!/bin/bash
+      # LongCat Long-Video generation (minutes-long)
+      # Usage: longcat_long.sh "your prompt here" [num_gpus]
+
+      PROMPT="${1:-A doctor explaining medical procedure in hospital}"
+      NUM_GPUS="${2:-4}"
+
+      source {{ app_dir }}/venv/bin/activate
+      cd {{ models_dir }}/LongCat-Video-code
+
+      echo "🐱 Generating LONG video with LongCat..."
+      echo "Prompt: $PROMPT"
+      echo "GPUs: $NUM_GPUS"
+      echo "⚠️  This may take several minutes..."
+      echo ""
+
+      if [ "$NUM_GPUS" -eq 1 ]; then
+        torchrun run_demo_long_video.py \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      else
+        torchrun --nproc_per_node=$NUM_GPUS run_demo_long_video.py \
+          --context_parallel_size=$NUM_GPUS \
+          --checkpoint_dir={{ models_dir }}/LongCat-Video \
+          --prompt "$PROMPT" \
+          --output_dir={{ output_dir }}
+      fi
+
+      echo ""
+      echo "✅ Done! Check {{ output_dir }}/"
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [setup-longcat]
+
+# ============================================
+# FINAL STATUS
+# ============================================
+- name: Display LongCat setup complete
+  debug:
+    msg: |
+      ==========================================
+      ✅ LONGCAT-VIDEO SETUP COMPLETE
+      ==========================================
+      Code: {{ models_dir }}/LongCat-Video-code/
+      Model: {{ models_dir }}/LongCat-Video/
+
+      Helper Scripts:
+      - ~/video-generation/longcat_t2v.sh "prompt"      # Text-to-Video
+      - ~/video-generation/longcat_i2v.sh img "prompt"  # Image-to-Video
+      - ~/video-generation/longcat_continue.sh vid "prompt"  # Video-Continuation
+      - ~/video-generation/longcat_long.sh "prompt"     # Long Video
+
+      Examples:
+      ~/video-generation/longcat_t2v.sh "Doctor in white coat explaining procedure"
+      ~/video-generation/longcat_i2v.sh /mnt/output/doctor.png "Doctor walking in hospital"
+      ~/video-generation/longcat_continue.sh /mnt/output/scene1.mp4 "Doctor continues speaking"
+      ==========================================
+  tags: [setup-longcat]

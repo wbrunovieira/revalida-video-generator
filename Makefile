@@ -152,6 +152,18 @@ fix-ovi: ## Fix Ovi helper scripts (run if prompts not working)
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags fix-ovi-helper
 
+setup-longcat: ## Setup LongCat-Video (T2V, I2V, Video-Continuation, Long Videos)
+	@echo "$(CYAN)🐱 Setting up LongCat-Video...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags setup-longcat
+
+test-longcat: ## Test LongCat-Video installation
+	@echo "$(CYAN)🧪 Testing LongCat-Video...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags test-longcat
+
 download-model: ## Download a specific model (usage: make download-model MODEL=tencent/HunyuanVideo)
 	@if [ -z "$(MODEL)" ]; then \
 		echo "$(RED)Error: MODEL not specified$(NC)"; \

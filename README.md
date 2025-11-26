@@ -1,6 +1,6 @@
 # Revalida Video Generator
 
-AWS-based infrastructure for self-hosted AI video generation using models like HunyuanVideo, HoloCine, CogVideoX, and Ovi.
+AWS-based infrastructure for self-hosted AI video generation using models like HunyuanVideo, HoloCine, CogVideoX, Ovi, and LongCat-Video.
 
 ## 🚀 Quick Start
 
@@ -159,6 +159,7 @@ This downloads:
 - **HunyuanVideo** (~25GB) - Best quality, supports LoRA
 - **Wan 2.2** (~20GB) - Most versatile (T2V + I2V)
 - **Ovi** (~70GB) - Video + synchronized audio generation
+- **LongCat-Video** (~27GB) - Long videos, I2V, video continuation
 
 **Option 2: Download specific model**
 ```bash
@@ -171,6 +172,7 @@ download-model tencent/HunyuanVideo
 download-model yihao-meng/HoloCine
 download-model THUDM/CogVideoX-5b
 download-model feizhengcong/Ovi
+download-model meituan-longcat/LongCat-Video
 ```
 
 ### Generate Videos
@@ -180,6 +182,7 @@ download-model feizhengcong/Ovi
 - 📖 **[HunyuanVideo](docs/HUNYUANVIDEO.md)** - Highest quality, LoRA support
 - 📖 **[Wan 2.2](docs/WAN22.md)** - Text-to-Video & Image-to-Video
 - 📖 **[Ovi](#ovi-video--audio)** - Video with synchronized audio
+- 📖 **[LongCat-Video](#longcat-video-long-videos--character-consistency)** - Long videos, I2V, continuation
 
 **Example workflow:**
 ```bash
@@ -239,6 +242,55 @@ venv
 # Nature scene with music
 ~/video-generation/ovi_generate.sh "Beautiful sunset over ocean waves. Audio: Calm piano melody with gentle wave sounds"
 ```
+
+### LongCat-Video (Long Videos + Character Consistency)
+
+LongCat-Video is a **13.6B parameter model** that excels at long video generation and maintaining character consistency through Image-to-Video and Video-Continuation.
+
+**Setup LongCat:**
+```bash
+# From local machine
+make setup-longcat
+```
+
+**Available modes:**
+
+| Mode | Script | Use Case |
+|------|--------|----------|
+| Text-to-Video | `longcat_t2v.sh` | Generate video from text prompt |
+| Image-to-Video | `longcat_i2v.sh` | Animate an image (character consistency!) |
+| Video-Continuation | `longcat_continue.sh` | Extend existing video |
+| Long Video | `longcat_long.sh` | Generate minutes-long videos |
+
+**Generate videos:**
+```bash
+# SSH into server
+make ssh
+venv
+
+# Text-to-Video (uses all 4 GPUs)
+~/video-generation/longcat_t2v.sh "Doctor in white coat explaining medical procedure in modern hospital"
+
+# Image-to-Video (maintain character from image)
+~/video-generation/longcat_i2v.sh /mnt/output/doctor_character.png "Doctor walking through hospital corridor"
+
+# Video-Continuation (extend existing video)
+~/video-generation/longcat_continue.sh /mnt/output/scene1.mp4 "Doctor continues explaining while pointing at screen"
+
+# Long Video (minutes-long generation)
+~/video-generation/longcat_long.sh "Extended medical lecture in university classroom"
+```
+
+**Workflow for consistent characters:**
+1. Generate or create a reference image of your character
+2. Use `longcat_i2v.sh` to create first video clip
+3. Use `longcat_continue.sh` to extend with more scenes
+4. Character remains consistent throughout!
+
+**Specs:**
+- Resolution: 720p at 30fps
+- Multi-GPU: Uses context parallelism (4 GPUs = faster)
+- Architecture: Dense 13.6B params with FlashAttention-2
 
 ### Copy Videos to Local
 
@@ -312,6 +364,12 @@ Based on analysis in `docs/analise-modelos-text-to-video.md`:
 - Generates synchronized audio with video in single pass
 - Perfect for speech, narration, music, sound effects
 
+**Best for Long Videos + Character Consistency:**
+- LongCat-Video (720p, 30fps, minutes-long)
+- Image-to-Video for character consistency
+- Video-Continuation to extend scenes
+- No audio (combine with TTS for narration)
+
 ## 💡 Tips
 
 ### Daily Workflow
@@ -376,4 +434,4 @@ MIT
 
 **Created with:** Terraform + Ansible + Make
 **GPU:** NVIDIA A10G (4x on G5.12xlarge)
-**Models:** HunyuanVideo, HoloCine, CogVideoX, Ovi
+**Models:** HunyuanVideo, HoloCine, CogVideoX, Ovi, LongCat-Video

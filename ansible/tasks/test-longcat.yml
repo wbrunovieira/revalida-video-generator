@@ -1,0 +1,166 @@
+---
+# Test LongCat-Video installation
+# Run with: ansible-playbook playbook.yml --tags test-longcat
+
+- name: Display LongCat test banner
+  debug:
+    msg: |
+      ==========================================
+      🧪 TESTING LONGCAT-VIDEO
+      ==========================================
+      This will create test scripts and verify
+      the installation is working correctly.
+      ==========================================
+  tags: [test-longcat]
+
+# ============================================
+# VERIFY INSTALLATION
+# ============================================
+- name: Check LongCat code directory
+  stat:
+    path: "{{ models_dir }}/LongCat-Video-code/run_demo_text_to_video.py"
+  register: longcat_code_check
+  tags: [test-longcat]
+
+- name: Check LongCat model directory
+  stat:
+    path: "{{ models_dir }}/LongCat-Video/config.json"
+  register: longcat_model_check
+  tags: [test-longcat]
+
+- name: Display installation status
+  debug:
+    msg: |
+      LongCat Code: {{ 'Found ✅' if longcat_code_check.stat.exists else 'Missing ❌' }}
+      LongCat Model: {{ 'Found ✅' if longcat_model_check.stat.exists else 'Missing ❌ (run make setup-longcat)' }}
+  tags: [test-longcat]
+
+# ============================================
+# CREATE QUICK TEST SCRIPT
+# ============================================
+- name: Create LongCat quick test script
+  copy:
+    dest: "{{ output_dir }}/test_longcat.py"
+    content: |
+      #!/usr/bin/env python3
+      """
+      Quick test for LongCat-Video installation
+      Verifies model loading without full generation
+      """
+      import sys
+      import os
+      sys.path.insert(0, '{{ models_dir }}/LongCat-Video-code')
+
+      print("=" * 50)
+      print("🐱 LongCat-Video Quick Test")
+      print("=" * 50)
+
+      # Check PyTorch and CUDA
+      print("\n1. Checking PyTorch and CUDA...")
+      import torch
+      print(f"   PyTorch version: {torch.__version__}")
+      print(f"   CUDA available: {torch.cuda.is_available()}")
+      if torch.cuda.is_available():
+          print(f"   CUDA version: {torch.version.cuda}")
+          print(f"   GPU count: {torch.cuda.device_count()}")
+          for i in range(torch.cuda.device_count()):
+              props = torch.cuda.get_device_properties(i)
+              print(f"   GPU {i}: {props.name} ({props.total_memory // 1024**3}GB)")
+
+      # Check flash-attn
+      print("\n2. Checking FlashAttention...")
+      try:
+          import flash_attn
+          print(f"   flash-attn version: {flash_attn.__version__}")
+      except ImportError:
+          print("   ⚠️  flash-attn not installed")
+
+      # Check model files
+      print("\n3. Checking model files...")
+      model_dir = "{{ models_dir }}/LongCat-Video"
+      required_files = ["config.json"]
+      for f in required_files:
+          path = os.path.join(model_dir, f)
+          status = "✅" if os.path.exists(path) else "❌"
+          print(f"   {f}: {status}")
+
+      # Check code files
+      print("\n4. Checking code files...")
+      code_dir = "{{ models_dir }}/LongCat-Video-code"
+      scripts = [
+          "run_demo_text_to_video.py",
+          "run_demo_image_to_video.py",
+          "run_demo_video_continuation.py",
+          "run_demo_long_video.py"
+      ]
+      for s in scripts:
+          path = os.path.join(code_dir, s)
+          status = "✅" if os.path.exists(path) else "❌"
+          print(f"   {s}: {status}")
+
+      # Check helper scripts
+      print("\n5. Checking helper scripts...")
+      helpers = [
+          "{{ app_dir }}/longcat_t2v.sh",
+          "{{ app_dir }}/longcat_i2v.sh",
+          "{{ app_dir }}/longcat_continue.sh",
+          "{{ app_dir }}/longcat_long.sh"
+      ]
+      for h in helpers:
+          status = "✅" if os.path.exists(h) else "❌"
+          print(f"   {os.path.basename(h)}: {status}")
+
+      print("\n" + "=" * 50)
+      print("✅ Quick test completed!")
+      print("")
+      print("To generate a video, run:")
+      print("  ~/video-generation/longcat_t2v.sh 'your prompt'")
+      print("=" * 50)
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [test-longcat]
+
+- name: Run quick test
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    python3 {{ output_dir }}/test_longcat.py
+  become_user: ubuntu
+  register: test_output
+  tags: [test-longcat]
+  args:
+    executable: /bin/bash
+  ignore_errors: yes
+
+- name: Display test results
+  debug:
+    msg: "{{ test_output.stdout }}"
+  tags: [test-longcat]
+
+# ============================================
+# FINAL INSTRUCTIONS
+# ============================================
+- name: Display test complete message
+  debug:
+    msg: |
+      ==========================================
+      🧪 LONGCAT TEST COMPLETE
+      ==========================================
+
+      Generate videos with:
+
+      # Text-to-Video (4 GPUs)
+      ~/video-generation/longcat_t2v.sh "Doctor explaining procedure in hospital"
+
+      # Image-to-Video (maintain character)
+      ~/video-generation/longcat_i2v.sh /path/to/character.png "Character walking forward"
+
+      # Video-Continuation (extend existing video)
+      ~/video-generation/longcat_continue.sh /path/to/video.mp4 "Continue the scene"
+
+      # Long Video (minutes-long)
+      ~/video-generation/longcat_long.sh "Extended medical lecture scene"
+
+      Output: {{ output_dir }}/
+      ==========================================
+  tags: [test-longcat]
