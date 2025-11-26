@@ -291,8 +291,9 @@
 
       # I2V Mode - Image as first frame
       mode: "i2v"
-      image_prompt: "$IMAGE_PATH"
+      image_path: "$IMAGE_PATH"
       text_prompt: "$PROMPT"
+      video_frame_height_width: [720, 720]
       each_example_n_times: 1
 
       # Quality control
@@ -370,8 +371,9 @@
       fp8: True
 
       mode: "i2v"
-      image_prompt: "$IMAGE_PATH"
+      image_path: "$IMAGE_PATH"
       text_prompt: "$PROMPT"
+      video_frame_height_width: [960, 960]
       each_example_n_times: 1
 
       video_negative_prompt: "jitter, bad hands, blur, distortion"
