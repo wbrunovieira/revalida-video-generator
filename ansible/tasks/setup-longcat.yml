@@ -257,27 +257,74 @@
           print(f"[Rank {local_rank}] Generating video...")
           print(f"[Rank {local_rank}] Prompt: {prompt[:100]}...")
 
-          # Generate at 480p first (less memory)
-          output = pipe.generate_t2v(
+          # Stage 1: Generate at 480p with distill LoRA (faster)
+          print(f"[Rank {local_rank}] Stage 1: Generating 480p base video...")
+          cfg_step_lora_path = os.path.join(checkpoint_dir, 'lora/cfg_step_lora.safetensors')
+          if os.path.exists(cfg_step_lora_path):
+              pipe.dit.load_lora(cfg_step_lora_path, 'cfg_step_lora')
+              pipe.dit.enable_loras(['cfg_step_lora'])
+
+          output_distill = pipe.generate_t2v(
               prompt=prompt,
-              negative_prompt=negative_prompt,
               height=480,
               width=832,
               num_frames=93,
-              num_inference_steps=50,
-              guidance_scale=4.0,
+              num_inference_steps=16,
+              use_distill=True,
+              guidance_scale=1.0,
               generator=generator,
           )[0]
 
-          if local_rank == 0:
-              os.makedirs(output_dir, exist_ok=True)
-              output_tensor = torch.from_numpy(np.array(output))
-              output_tensor = (output_tensor * 255).clamp(0, 255).to(torch.uint8)
-              output_path = os.path.join(output_dir, "longcat_t2v_480p.mp4")
-              write_video(output_path, output_tensor, fps=15, video_codec="libx264", options={"crf": "18"})
-              print(f"✅ Saved: {output_path}")
+          if os.path.exists(cfg_step_lora_path):
+              pipe.dit.disable_all_loras()
 
-          del output
+          torch_gc()
+
+          # Stage 2: Refine to 720p
+          print(f"[Rank {local_rank}] Stage 2: Refining to 720p...")
+          refinement_lora_path = os.path.join(checkpoint_dir, 'lora/refinement_lora.safetensors')
+          if os.path.exists(refinement_lora_path):
+              pipe.dit.load_lora(refinement_lora_path, 'refinement_lora')
+              pipe.dit.enable_loras(['refinement_lora'])
+              pipe.dit.enable_bsa()
+
+              stage1_video = [(output_distill[i] * 255).astype(np.uint8) for i in range(output_distill.shape[0])]
+              stage1_video = [PIL.Image.fromarray(img) for img in stage1_video]
+              del output_distill
+              torch_gc()
+
+              output_refine = pipe.generate_refine(
+                  prompt=prompt,
+                  stage1_video=stage1_video,
+                  num_inference_steps=50,
+                  generator=generator,
+                  spatial_refine_only=False
+              )[0]
+
+              pipe.dit.disable_all_loras()
+              pipe.dit.disable_bsa()
+
+              if local_rank == 0:
+                  os.makedirs(output_dir, exist_ok=True)
+                  output_tensor = torch.from_numpy(output_refine)
+                  output_tensor = (output_tensor * 255).clamp(0, 255).to(torch.uint8)
+                  timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                  output_path = os.path.join(output_dir, f"longcat_720p_{timestamp}.mp4")
+                  write_video(output_path, output_tensor, fps=30, video_codec="libx264", options={"crf": "10"})
+                  print(f"✅ Saved 720p: {output_path}")
+
+              del output_refine
+          else:
+              # Fallback: save 480p if no refinement LoRA
+              if local_rank == 0:
+                  os.makedirs(output_dir, exist_ok=True)
+                  output_tensor = torch.from_numpy(np.array(output_distill))
+                  output_tensor = (output_tensor * 255).clamp(0, 255).to(torch.uint8)
+                  timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                  output_path = os.path.join(output_dir, f"longcat_480p_{timestamp}.mp4")
+                  write_video(output_path, output_tensor, fps=15, video_codec="libx264", options={"crf": "18"})
+                  print(f"✅ Saved 480p: {output_path}")
+
           torch_gc()
 
           if num_gpus > 1:
