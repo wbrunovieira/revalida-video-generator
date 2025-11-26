@@ -294,6 +294,86 @@ Use `<S>...<E>` tags to make characters speak:
 "Ocean sunset scene. Audio: Calm piano melody with gentle wave sounds"
 ```
 
+#### Best practices for I2V (tested and verified)
+
+Based on extensive testing, these tips will help you get the best results:
+
+**1. Use natural, descriptive prompts (NOT technical)**
+```bash
+# GOOD - Natural description
+"A friendly Italian doctor in white coat warmly greeting the camera and speaking.
+He is animated and expressive, gesturing naturally as he talks. Professional medical setting."
+
+# BAD - Too technical (may cause static image)
+"Doctor with lip movements and mouth opening closing synchronized to speech."
+```
+
+**2. Keep speech short for 5-second videos**
+```bash
+# GOOD - Short phrase fits well in 5 seconds
+"Audio: <S>Ciao! Benvenuto al corso Revalida Italia.<E> Gentle piano music"
+
+# BAD - Too long, audio will be rushed/cut
+"Audio: <S>Benvenuto al Corso di Italiano Medico della Revalida Italia. Oggi parleremo di...<E>"
+```
+
+**3. Use custom config for fine-tuning**
+
+For best results, create a custom YAML config:
+
+```bash
+# SSH into server
+make ssh
+venv
+
+# Create custom config
+cat > /tmp/custom_i2v.yaml << 'EOF'
+model_name: "720x720_5s"
+output_dir: "/mnt/output"
+ckpt_dir: "/mnt/models/Ovi"
+
+sample_steps: 50
+solver_name: "unipc"
+shift: 5.0
+seed: 12345                    # Try different seeds for variation
+
+audio_guidance_scale: 3.0
+video_guidance_scale: 5.0      # Higher = more prompt adherence (default 4.0)
+slg_layer: 11
+
+sp_size: 1
+cpu_offload: True
+fp8: True
+
+mode: "i2v"
+image_path: "/mnt/output/your_image.png"
+text_prompt: "A friendly doctor speaking warmly to camera. Audio: <S>Your speech here.<E> Background music."
+video_frame_height_width: [720, 720]
+each_example_n_times: 1
+
+video_negative_prompt: "static, frozen, still image, no movement, blur, distortion"
+audio_negative_prompt: "robotic, fast, unclear, distorted, muffled"
+EOF
+
+# Run with custom config
+cd /mnt/models/Ovi-code
+python3 inference.py --config-file /tmp/custom_i2v.yaml
+```
+
+**4. Key parameters to experiment with:**
+
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `seed` | 42 | Different seeds = different results |
+| `video_guidance_scale` | 4.0 | Higher (5.0-6.0) = more prompt adherence |
+| `sample_steps` | 50 | More steps = better quality (slower) |
+| `video_negative_prompt` | - | Avoid unwanted artifacts |
+
+**5. Important limitations:**
+- **FP8 only works with 720x720_5s** - The 10-second 960x960 model requires full precision (more VRAM)
+- **5 seconds is the limit** with FP8 quantization on 24GB VRAM
+- **Lip sync is approximate** - Ovi generates audio and video together but sync isn't perfect
+
 #### Workflow for consistent character videos
 
 1. **Create/obtain a reference image** of your character (doctor, presenter, etc.)
