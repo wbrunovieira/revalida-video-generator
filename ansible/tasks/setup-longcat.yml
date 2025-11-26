@@ -152,21 +152,33 @@
       echo "GPUs: $NUM_GPUS"
       echo ""
 
-      if [ "$NUM_GPUS" -eq 1 ]; then
-        torchrun run_demo_text_to_video.py \
-          --checkpoint_dir={{ models_dir }}/LongCat-Video \
-          --prompt "$PROMPT" \
-          --output_dir={{ output_dir }}
-      else
-        torchrun --nproc_per_node=$NUM_GPUS run_demo_text_to_video.py \
-          --context_parallel_size=$NUM_GPUS \
-          --checkpoint_dir={{ models_dir }}/LongCat-Video \
-          --prompt "$PROMPT" \
-          --output_dir={{ output_dir }}
-      fi
+      # Backup original script
+      cp run_demo_text_to_video.py run_demo_text_to_video.py.bak
+
+      # Replace prompt in script (escape special characters for sed)
+      ESCAPED_PROMPT=$(echo "$PROMPT" | sed 's/[&/\]/\\&/g' | sed "s/'/\\\\'/g")
+      sed -i "s|prompt = \".*\"|prompt = \"$ESCAPED_PROMPT\"|" run_demo_text_to_video.py
+
+      # Run generation
+      torchrun --nproc_per_node=$NUM_GPUS run_demo_text_to_video.py \
+        --context_parallel_size=$NUM_GPUS \
+        --checkpoint_dir={{ models_dir }}/LongCat-Video
+
+      # Restore original script
+      mv run_demo_text_to_video.py.bak run_demo_text_to_video.py
+
+      # Move outputs to /mnt/output with timestamp
+      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+      for f in output_t2v*.mp4; do
+        if [ -f "$f" ]; then
+          mv "$f" "{{ output_dir }}/longcat_${TIMESTAMP}_${f}"
+          echo "✅ Saved: {{ output_dir }}/longcat_${TIMESTAMP}_${f}"
+        fi
+      done
 
       echo ""
       echo "✅ Done! Check {{ output_dir }}/"
+      ls -la {{ output_dir }}/longcat_*.mp4 2>/dev/null | tail -5
     mode: '0755'
     owner: ubuntu
     group: ubuntu
@@ -199,23 +211,35 @@
       echo "GPUs: $NUM_GPUS"
       echo ""
 
-      if [ "$NUM_GPUS" -eq 1 ]; then
-        torchrun run_demo_image_to_video.py \
-          --checkpoint_dir={{ models_dir }}/LongCat-Video \
-          --image_path "$IMAGE_PATH" \
-          --prompt "$PROMPT" \
-          --output_dir={{ output_dir }}
-      else
-        torchrun --nproc_per_node=$NUM_GPUS run_demo_image_to_video.py \
-          --context_parallel_size=$NUM_GPUS \
-          --checkpoint_dir={{ models_dir }}/LongCat-Video \
-          --image_path "$IMAGE_PATH" \
-          --prompt "$PROMPT" \
-          --output_dir={{ output_dir }}
-      fi
+      # Backup original script
+      cp run_demo_image_to_video.py run_demo_image_to_video.py.bak
+
+      # Replace prompt and image_path in script
+      ESCAPED_PROMPT=$(echo "$PROMPT" | sed 's/[&/\]/\\&/g' | sed "s/'/\\\\'/g")
+      ESCAPED_IMAGE=$(echo "$IMAGE_PATH" | sed 's/[&/\]/\\&/g')
+      sed -i "s|prompt = \".*\"|prompt = \"$ESCAPED_PROMPT\"|" run_demo_image_to_video.py
+      sed -i "s|image_path = \".*\"|image_path = \"$ESCAPED_IMAGE\"|" run_demo_image_to_video.py
+
+      # Run generation
+      torchrun --nproc_per_node=$NUM_GPUS run_demo_image_to_video.py \
+        --context_parallel_size=$NUM_GPUS \
+        --checkpoint_dir={{ models_dir }}/LongCat-Video
+
+      # Restore original script
+      mv run_demo_image_to_video.py.bak run_demo_image_to_video.py
+
+      # Move outputs to /mnt/output with timestamp
+      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+      for f in output_i2v*.mp4; do
+        if [ -f "$f" ]; then
+          mv "$f" "{{ output_dir }}/longcat_i2v_${TIMESTAMP}_${f}"
+          echo "✅ Saved: {{ output_dir }}/longcat_i2v_${TIMESTAMP}_${f}"
+        fi
+      done
 
       echo ""
       echo "✅ Done! Check {{ output_dir }}/"
+      ls -la {{ output_dir }}/longcat_i2v_*.mp4 2>/dev/null | tail -5
     mode: '0755'
     owner: ubuntu
     group: ubuntu
@@ -248,23 +272,35 @@
       echo "GPUs: $NUM_GPUS"
       echo ""
 
-      if [ "$NUM_GPUS" -eq 1 ]; then
-        torchrun run_demo_video_continuation.py \
-          --checkpoint_dir={{ models_dir }}/LongCat-Video \
-          --video_path "$VIDEO_PATH" \
-          --prompt "$PROMPT" \
-          --output_dir={{ output_dir }}
-      else
-        torchrun --nproc_per_node=$NUM_GPUS run_demo_video_continuation.py \
-          --context_parallel_size=$NUM_GPUS \
-          --checkpoint_dir={{ models_dir }}/LongCat-Video \
-          --video_path "$VIDEO_PATH" \
-          --prompt "$PROMPT" \
-          --output_dir={{ output_dir }}
-      fi
+      # Backup original script
+      cp run_demo_video_continuation.py run_demo_video_continuation.py.bak
+
+      # Replace prompt and video_path in script
+      ESCAPED_PROMPT=$(echo "$PROMPT" | sed 's/[&/\]/\\&/g' | sed "s/'/\\\\'/g")
+      ESCAPED_VIDEO=$(echo "$VIDEO_PATH" | sed 's/[&/\]/\\&/g')
+      sed -i "s|prompt = \".*\"|prompt = \"$ESCAPED_PROMPT\"|" run_demo_video_continuation.py
+      sed -i "s|video_path = \".*\"|video_path = \"$ESCAPED_VIDEO\"|" run_demo_video_continuation.py
+
+      # Run generation
+      torchrun --nproc_per_node=$NUM_GPUS run_demo_video_continuation.py \
+        --context_parallel_size=$NUM_GPUS \
+        --checkpoint_dir={{ models_dir }}/LongCat-Video
+
+      # Restore original script
+      mv run_demo_video_continuation.py.bak run_demo_video_continuation.py
+
+      # Move outputs to /mnt/output with timestamp
+      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+      for f in output_continuation*.mp4 output_vc*.mp4; do
+        if [ -f "$f" ]; then
+          mv "$f" "{{ output_dir }}/longcat_continue_${TIMESTAMP}_${f}"
+          echo "✅ Saved: {{ output_dir }}/longcat_continue_${TIMESTAMP}_${f}"
+        fi
+      done
 
       echo ""
       echo "✅ Done! Check {{ output_dir }}/"
+      ls -la {{ output_dir }}/longcat_continue_*.mp4 2>/dev/null | tail -5
     mode: '0755'
     owner: ubuntu
     group: ubuntu
@@ -290,21 +326,33 @@
       echo "⚠️  This may take several minutes..."
       echo ""
 
-      if [ "$NUM_GPUS" -eq 1 ]; then
-        torchrun run_demo_long_video.py \
-          --checkpoint_dir={{ models_dir }}/LongCat-Video \
-          --prompt "$PROMPT" \
-          --output_dir={{ output_dir }}
-      else
-        torchrun --nproc_per_node=$NUM_GPUS run_demo_long_video.py \
-          --context_parallel_size=$NUM_GPUS \
-          --checkpoint_dir={{ models_dir }}/LongCat-Video \
-          --prompt "$PROMPT" \
-          --output_dir={{ output_dir }}
-      fi
+      # Backup original script
+      cp run_demo_long_video.py run_demo_long_video.py.bak
+
+      # Replace prompt in script
+      ESCAPED_PROMPT=$(echo "$PROMPT" | sed 's/[&/\]/\\&/g' | sed "s/'/\\\\'/g")
+      sed -i "s|prompt = \".*\"|prompt = \"$ESCAPED_PROMPT\"|" run_demo_long_video.py
+
+      # Run generation
+      torchrun --nproc_per_node=$NUM_GPUS run_demo_long_video.py \
+        --context_parallel_size=$NUM_GPUS \
+        --checkpoint_dir={{ models_dir }}/LongCat-Video
+
+      # Restore original script
+      mv run_demo_long_video.py.bak run_demo_long_video.py
+
+      # Move outputs to /mnt/output with timestamp
+      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+      for f in output_long*.mp4; do
+        if [ -f "$f" ]; then
+          mv "$f" "{{ output_dir }}/longcat_long_${TIMESTAMP}_${f}"
+          echo "✅ Saved: {{ output_dir }}/longcat_long_${TIMESTAMP}_${f}"
+        fi
+      done
 
       echo ""
       echo "✅ Done! Check {{ output_dir }}/"
+      ls -la {{ output_dir }}/longcat_long_*.mp4 2>/dev/null | tail -5
     mode: '0755'
     owner: ubuntu
     group: ubuntu
