@@ -66,11 +66,28 @@
   become_user: ubuntu
   tags: [setup-longcat]
 
-- name: Install LongCat requirements
+- name: Install LongCat requirements (excluding flash-attn)
   shell: |
     source {{ app_dir }}/venv/bin/activate
     cd {{ models_dir }}/LongCat-Video-code
-    pip install -r requirements.txt
+    # Install requirements excluding flash-attn (already installed separately)
+    grep -v "flash-attn" requirements.txt | pip install -r /dev/stdin
+  become_user: ubuntu
+  tags: [setup-longcat]
+  args:
+    executable: /bin/bash
+  ignore_errors: yes
+
+- name: Ensure flash-attn is installed (pre-built wheel)
+  shell: |
+    source {{ app_dir }}/venv/bin/activate
+    # Check if already installed
+    if pip show flash-attn > /dev/null 2>&1; then
+      echo "flash-attn already installed"
+    else
+      # Install pre-built wheel for PyTorch 2.6 + CUDA 12.4
+      pip install flash-attn --no-build-isolation
+    fi
   become_user: ubuntu
   tags: [setup-longcat]
   args:
