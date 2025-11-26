@@ -221,6 +221,173 @@
     group: ubuntu
   tags: [fix-ovi-helper]
 
+- name: Create Ovi I2V (Image-to-Video) helper script
+  copy:
+    dest: "{{ app_dir }}/ovi_i2v.sh"
+    content: |
+      #!/bin/bash
+      # Ovi Image-to-Video Generation Helper
+      # Usage: ./ovi_i2v.sh <image_path> "Your prompt here. Audio: <S>Speech text<E> Audio description"
+      #
+      # Example:
+      #   ./ovi_i2v.sh /mnt/output/doctor.png "Doctor speaking to camera. Audio: <S>Buongiorno, sono il Dottor Rossi.<E> Professional office ambiance"
+
+      cd {{ models_dir }}/Ovi-code
+      source {{ app_dir }}/venv/bin/activate
+
+      # Check arguments
+      if [ -z "$1" ]; then
+          echo "❌ Error: Image path required"
+          echo ""
+          echo "Usage: ./ovi_i2v.sh <image_path> \"prompt with Audio: description\""
+          echo ""
+          echo "Examples:"
+          echo "  ./ovi_i2v.sh /mnt/output/doctor.png \"Doctor speaking. Audio: <S>Hello, I am Dr. Smith<E> Office sounds\""
+          echo "  ./ovi_i2v.sh ~/my_character.jpg \"Person walking in park. Audio: Birds chirping, footsteps\""
+          exit 1
+      fi
+
+      IMAGE_PATH="$1"
+      PROMPT="${2:-Person speaking to camera. Audio: <S>Hello, welcome to my video.<E> Soft background music}"
+
+      # Verify image exists
+      if [ ! -f "$IMAGE_PATH" ]; then
+          echo "❌ Error: Image not found: $IMAGE_PATH"
+          exit 1
+      fi
+
+      echo "=========================================="
+      echo "🎬 OVI IMAGE-TO-VIDEO (I2V)"
+      echo "=========================================="
+      echo "📷 Image: $IMAGE_PATH"
+      echo "📝 Prompt: $PROMPT"
+      echo "=========================================="
+      echo ""
+
+      # Create temporary config for I2V
+      TEMP_CONFIG="/tmp/ovi_i2v_config_$$.yaml"
+
+      cat > "$TEMP_CONFIG" << EOF
+      # Ovi I2V Configuration
+      model_name: "720x720_5s"
+      output_dir: "/mnt/output"
+      ckpt_dir: "/mnt/models/Ovi"
+
+      # Generation Quality
+      sample_steps: 50
+      solver_name: "unipc"
+      shift: 5.0
+      seed: 42
+
+      # Guidance
+      audio_guidance_scale: 3.0
+      video_guidance_scale: 4.0
+      slg_layer: 11
+
+      # Performance for 24GB VRAM
+      sp_size: 1
+      cpu_offload: True
+      fp8: True
+
+      # I2V Mode - Image as first frame
+      mode: "i2v"
+      image_prompt: "$IMAGE_PATH"
+      text_prompt: "$PROMPT"
+      each_example_n_times: 1
+
+      # Quality control
+      video_negative_prompt: "jitter, bad hands, blur, distortion, deformed"
+      audio_negative_prompt: "robotic, muffled, echo, distorted, unclear"
+      EOF
+
+      echo "🚀 Starting I2V generation..."
+      echo ""
+
+      # Run inference
+      python3 inference.py --config-file "$TEMP_CONFIG"
+
+      # Cleanup
+      rm -f "$TEMP_CONFIG"
+
+      echo ""
+      echo "=========================================="
+      echo "✅ I2V GENERATION COMPLETE!"
+      echo "=========================================="
+      echo "Output videos:"
+      ls -lh /mnt/output/*.mp4 2>/dev/null | tail -5
+      echo "=========================================="
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [fix-ovi-helper]
+
+- name: Create Ovi I2V 10-second helper script
+  copy:
+    dest: "{{ app_dir }}/ovi_i2v_10s.sh"
+    content: |
+      #!/bin/bash
+      # Ovi Image-to-Video 10-Second Generation
+      # Usage: ./ovi_i2v_10s.sh <image_path> "Your prompt. Audio: description"
+
+      cd {{ models_dir }}/Ovi-code
+      source {{ app_dir }}/venv/bin/activate
+
+      if [ -z "$1" ]; then
+          echo "❌ Usage: ./ovi_i2v_10s.sh <image_path> \"prompt\""
+          exit 1
+      fi
+
+      IMAGE_PATH="$1"
+      PROMPT="${2:-Person speaking. Audio: <S>Welcome to the presentation<E> Background music}"
+
+      if [ ! -f "$IMAGE_PATH" ]; then
+          echo "❌ Image not found: $IMAGE_PATH"
+          exit 1
+      fi
+
+      echo "🎬 OVI I2V 10-SECOND (960x960)"
+      echo "📷 Image: $IMAGE_PATH"
+      echo "📝 Prompt: $PROMPT"
+
+      TEMP_CONFIG="/tmp/ovi_i2v_10s_$$.yaml"
+
+      cat > "$TEMP_CONFIG" << EOF
+      model_name: "960x960_10s"
+      output_dir: "/mnt/output"
+      ckpt_dir: "/mnt/models/Ovi"
+
+      sample_steps: 50
+      solver_name: "unipc"
+      shift: 5.0
+      seed: 42
+
+      audio_guidance_scale: 3.0
+      video_guidance_scale: 4.0
+      slg_layer: 11
+
+      sp_size: 1
+      cpu_offload: True
+      fp8: True
+
+      mode: "i2v"
+      image_prompt: "$IMAGE_PATH"
+      text_prompt: "$PROMPT"
+      each_example_n_times: 1
+
+      video_negative_prompt: "jitter, bad hands, blur, distortion"
+      audio_negative_prompt: "robotic, muffled, echo, distorted"
+      EOF
+
+      python3 inference.py --config-file "$TEMP_CONFIG"
+      rm -f "$TEMP_CONFIG"
+
+      echo "✅ Done! Check /mnt/output/"
+      ls -lh /mnt/output/*.mp4 | tail -3
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+  tags: [fix-ovi-helper]
+
 - name: Update test_ovi_quick.sh with correct approach
   copy:
     dest: /mnt/output/test_ovi_quick.sh
@@ -256,16 +423,25 @@
   debug:
     msg: |
       ==========================================
-      ✅ OVI HELPER SCRIPTS FIXED
+      ✅ OVI HELPER SCRIPTS READY
       ==========================================
 
-      The scripts now properly create temporary
-      YAML configs with your custom prompts.
+      📹 TEXT-TO-VIDEO (T2V):
+      ~/video-generation/ovi_generate.sh "Prompt. Audio: description"
 
-      Test with:
-      ~/video-generation/ovi_generate.sh "Your prompt. Audio: audio"
+      🖼️ IMAGE-TO-VIDEO (I2V) - 5 seconds:
+      ~/video-generation/ovi_i2v.sh /path/to/image.png "Prompt. Audio: <S>Speech<E> sounds"
 
-      Or use the base config:
-      /mnt/output/test_ovi_quick.sh
+      🖼️ IMAGE-TO-VIDEO (I2V) - 10 seconds (960x960):
+      ~/video-generation/ovi_i2v_10s.sh /path/to/image.png "Prompt. Audio: description"
+
+      📝 PROMPT FORMAT:
+      - Speech: <S>Your speech here<E>
+      - Audio: Audio: description at end
+
+      🎯 EXAMPLE - Doctor speaking Italian:
+      ~/video-generation/ovi_i2v.sh /mnt/output/doctor.png \
+        "Doctor in white coat. Audio: <S>Buongiorno, sono il Dottor Rossi<E> Office ambiance"
+
       ==========================================
   tags: [fix-ovi-helper]

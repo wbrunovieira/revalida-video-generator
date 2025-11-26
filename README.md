@@ -231,45 +231,90 @@ python HoloCine_inference_full_attention.py
 
 ### Ovi (Video + Audio)
 
-Ovi generates **video with synchronized audio** in a single pass - perfect for videos with speech, music, or sound effects.
+Ovi generates **video with synchronized audio** in a single pass - perfect for videos with speech, music, or sound effects. Supports both **Text-to-Video (T2V)** and **Image-to-Video (I2V)** modes.
 
 **Setup Ovi:**
 ```bash
 # From local machine
 make setup-ovi
+
+# If having issues, run fix
+make fix-ovi
 ```
 
-**Generate video+audio:**
+**Available scripts:**
+| Script | Mode | Resolution | Duration |
+|--------|------|------------|----------|
+| `ovi_generate.sh` | T2V | 720×720 | 5 seconds |
+| `ovi_i2v.sh` | I2V | 720×720 | 5 seconds |
+| `ovi_i2v_10s.sh` | I2V | 960×960 | 10 seconds |
+
+#### Text-to-Video (T2V) - Generate from prompt only
+
 ```bash
-# SSH into server
 make ssh
 venv
 
-# Use the helper script
-~/video-generation/ovi_generate.sh "A person speaking in a modern office. Audio: Professional male voice saying 'Welcome to our presentation' with soft background music"
+# Basic usage
+~/video-generation/ovi_generate.sh "Doctor in white coat speaking. Audio: Professional voice with hospital ambiance"
 ```
 
-**Prompt format:**
-- Describe the video scene first
-- Add `Audio:` followed by audio description
-- For 720x720 model, audio uses `<AUDCAP>...</ENDAUDCAP>` tags (auto-converted)
-- For 960x960 model, use `Audio: ...` format directly
+#### Image-to-Video (I2V) - Animate your character image
 
-**Available models:**
-| Model | Resolution | Duration | Use Case |
-|-------|------------|----------|----------|
-| `720x720_5s` | 720×720 | 5 seconds | Default, FP8 quantization available |
-| `960x960_5s` | 960×960 | 5 seconds | Higher quality |
-| `960x960_10s` | 960×960 | 10 seconds | Longer videos |
+Use I2V when you want **character consistency** - the person in your image will be animated speaking!
 
-**Example prompts:**
 ```bash
-# Doctor speaking
-~/video-generation/ovi_generate.sh "Medium shot of doctor in white coat, hospital background. Audio: Warm male voice saying 'Hello, I am Doctor Smith' with ambient hospital sounds"
+make ssh
+venv
 
-# Nature scene with music
-~/video-generation/ovi_generate.sh "Beautiful sunset over ocean waves. Audio: Calm piano melody with gentle wave sounds"
+# 1. Upload your character image to server (from local machine)
+scp ~/my_doctor.png ubuntu@<IP>:/mnt/output/
+
+# 2. Generate video with your character speaking (5 seconds)
+~/video-generation/ovi_i2v.sh /mnt/output/my_doctor.png \
+  "Doctor speaking to camera. Audio: <S>Buongiorno, sono il Dottor Rossi. Oggi parleremo di cardiologia.<E> Soft office ambiance"
+
+# 3. Or generate 10-second video (higher quality 960x960)
+~/video-generation/ovi_i2v_10s.sh /mnt/output/my_doctor.png \
+  "Doctor explaining procedure. Audio: <S>La pressione sanguigna normale è tra 120 e 80.<E> Hospital background"
 ```
+
+#### Prompt format for speech
+
+Use `<S>...<E>` tags to make characters speak:
+
+```bash
+# Character speaking Italian
+"Doctor in hospital. Audio: <S>Buongiorno, benvenuti al corso di italiano medico.<E> Soft background music"
+
+# Multiple sentences
+"Person presenting. Audio: <S>Welcome to our presentation. Today we will discuss important topics.<E> Office ambiance"
+
+# No speech, just sounds
+"Ocean sunset scene. Audio: Calm piano melody with gentle wave sounds"
+```
+
+#### Workflow for consistent character videos
+
+1. **Create/obtain a reference image** of your character (doctor, presenter, etc.)
+2. **Upload to server:** `scp character.png ubuntu@<IP>:/mnt/output/`
+3. **Generate multiple videos** using the same image with different prompts:
+
+```bash
+# Video 1: Introduction
+~/video-generation/ovi_i2v.sh /mnt/output/doctor.png \
+  "Doctor smiling at camera. Audio: <S>Ciao! Mi chiamo Dottor Rossi.<E> Warm office sounds"
+
+# Video 2: Lesson content
+~/video-generation/ovi_i2v.sh /mnt/output/doctor.png \
+  "Doctor explaining with gestures. Audio: <S>Oggi impariamo i termini medici.<E> Calm background"
+
+# Video 3: Conclusion
+~/video-generation/ovi_i2v.sh /mnt/output/doctor.png \
+  "Doctor waving goodbye. Audio: <S>Grazie per aver seguito la lezione. Arrivederci!<E> Soft music"
+```
+
+The **same doctor** will appear in all videos, maintaining consistency!
 
 ### LongCat-Video (Long Videos + Character Consistency)
 
@@ -387,9 +432,10 @@ Based on analysis in `docs/analise-modelos-text-to-video.md`:
 **Most Versatile:**
 - Wan 2.2 (supports both text-to-video and image-to-video)
 
-**Best for Video + Audio:**
+**Best for Video + Audio + Character Consistency:**
 - Ovi (720×720 or 960×960, 5-10s)
 - Generates synchronized audio with video in single pass
+- **I2V mode:** Use your character image for consistent talking head videos
 - Perfect for speech, narration, music, sound effects
 
 **Best for Long Videos + Character Consistency:**
