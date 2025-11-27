@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AWS infrastructure and automation for self-hosted AI video generation using models like HunyuanVideo, HoloCine, CogVideoX, and Ovi. Uses G5.12xlarge instances (4x NVIDIA A10G, 96GB VRAM) with Spot pricing (~$1.70/hour).
+AWS infrastructure and automation for self-hosted AI video generation using models like CogVideoX, Wan 2.2, and Ovi. Uses G5.12xlarge instances (4x NVIDIA A10G, 96GB VRAM) with Spot pricing (~$1.70/hour).
 
 ## Common Commands
 
@@ -17,8 +17,7 @@ make status              # Show server status
 make ssh                 # SSH into server
 
 # Model Setup (run after deploy)
-make download-models     # Download all 3 main models (~75GB)
-make setup-hunyuan       # Setup HunyuanVideo (720p, multi-GPU)
+make download-models     # Download Wan 2.2 model (~20GB)
 make setup-cogvideox     # Setup CogVideoX-5B with xDiT
 make setup-ovi           # Setup Ovi (video+audio generation)
 
@@ -34,7 +33,6 @@ make fmt                 # Format Terraform files
 
 # Debug & Testing
 make debug-torch         # Debug PyTorch installation
-make test-hunyuan        # Create HunyuanVideo test script
 make test-cogvideox      # Create CogVideoX test script
 make test-ovi            # Create Ovi test script
 ```
@@ -49,16 +47,10 @@ revalida-video-generator/
 │   ├── deploy.yml          # Orchestrator: Terraform + start instance + configure
 │   ├── playbook.yml        # Server setup: packages, volumes, Python env
 │   └── tasks/              # Tagged tasks for specific models
-│       ├── setup-hunyuan.yml
 │       ├── setup-cogvideox.yml
 │       ├── setup-ovi.yml
 │       └── download-models.yml
-├── video_configs/           # JSON configs for HoloCine batch generation
-├── generate_parallel.sh     # Multi-GPU parallel video generation
 └── docs/
-    ├── analise-modelos-text-to-video.md  # Model analysis (Portuguese)
-    ├── HOLOCINE.md          # HoloCine usage guide
-    ├── HUNYUANVIDEO.md      # HunyuanVideo usage guide
     └── WAN22.md             # Wan 2.2 usage guide
 ```
 
@@ -83,7 +75,7 @@ Model setup tasks use Ansible tags. Each task file has `tags: [tag-name, never]`
 ```bash
 # How the tags work
 make setup-cogvideox  # Runs: ansible-playbook playbook.yml --tags setup-cogvideox
-make test-hunyuan     # Runs: ansible-playbook playbook.yml --tags test-hunyuan
+make test-ovi         # Runs: ansible-playbook playbook.yml --tags test-ovi
 ```
 
 ## Adding a New Model
@@ -114,22 +106,6 @@ After `make ssh`, these aliases are available:
 
 ## Video Generation Workflow
 
-### HoloCine Multi-Shot (via JSON configs)
-
-```bash
-# 1. Create config in video_configs/
-cp video_configs/template.json video_configs/my_video.json
-
-# 2. Copy to server
-scp video_configs/*.json ubuntu@<IP>:/mnt/output/
-
-# 3. Generate (on server)
-python3 /mnt/output/run_holocine.py /mnt/output/my_video.json
-
-# Or parallel generation using all 4 GPUs:
-bash /mnt/output/generate_parallel.sh config1.json config2.json config3.json config4.json
-```
-
 ### CogVideoX with xDiT (multi-GPU)
 
 ```bash
@@ -146,6 +122,3 @@ torchrun --nproc_per_node=4 xDiT/examples/cogvideox_example.py --model /mnt/mode
 - **Spot Instances**: Configured with `instance_interruption_behavior = "stop"` (not terminate) to preserve data.
 - **EBS Volumes**: Persist across instance stops. Only destroyed with `make destroy`.
 
-## Document Language
-
-The analysis document (`docs/analise-modelos-text-to-video.md`) is in **Brazilian Portuguese**. Maintain this language when updating.

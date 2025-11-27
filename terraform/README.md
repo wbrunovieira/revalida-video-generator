@@ -76,7 +76,7 @@ scp -i ~/.ssh/id_rsa ubuntu@<IP-PUBLICO>:/mnt/output/*.mp4 ~/Downloads/
 - **Elastic IP:** $0 (grátis quando associado)
 
 ### Economia vs Sora
-- **HoloCine:** $0.42/vídeo vs Sora $6-30/vídeo
+- **Ovi/CogVideoX:** $0.42/vídeo vs Sora $6-30/vídeo
 - **Economia:** 93-98% 🎉
 
 ---
@@ -107,14 +107,14 @@ source /home/ubuntu/video-generation/venv/bin/activate
 ```bash
 cd /mnt/models
 
-# HunyuanVideo (Recomendado - melhor qualidade)
-huggingface-cli download tencent/HunyuanVideo --local-dir HunyuanVideo
+# Ovi (Video + Audio generation)
+huggingface-cli download feizhengcong/Ovi --local-dir Ovi
 
-# HoloCine (Multi-shot, vídeos longos)
-huggingface-cli download yihao-meng/HoloCine --local-dir HoloCine
-
-# CogVideoX-5B (Alternativa menor)
+# CogVideoX-5B (Multi-GPU support with xDiT)
 huggingface-cli download THUDM/CogVideoX-5b --local-dir CogVideoX-5b
+
+# Wan 2.2 (Text-to-Video + Image-to-Video)
+huggingface-cli download Wan-AI/Wan2.2 --local-dir Wan2.2
 ```
 
 ### 4. Verificar GPU

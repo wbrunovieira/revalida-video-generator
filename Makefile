@@ -34,7 +34,7 @@ start: ## Start the server (interactive instance selection)
 	@echo "$(YELLOW)Select instance type:$(NC)"
 	@echo ""
 	@echo "  $(GREEN)1)$(NC) g5.12xlarge  - 4x A10G (24GB each) - ~$$1.70/h spot"
-	@echo "     $(CYAN)Best for: Ovi, HunyuanVideo, HoloCine, CogVideoX$(NC)"
+	@echo "     $(CYAN)Best for: Ovi, CogVideoX, Wan 2.2$(NC)"
 	@echo ""
 	@echo "  $(GREEN)2)$(NC) p3dn.24xlarge - 8x V100 (32GB each) - ~$$10/h spot"
 	@echo "     $(CYAN)Best for: Large models requiring 32GB+ VRAM/GPU$(NC)"
@@ -137,7 +137,7 @@ status: ## Show server status
 		echo "  $(GREEN)Cost:$(NC)      $$COST" && \
 		echo "" && \
 		if [ "$$TYPE" = "g5.12xlarge" ]; then \
-			echo "  $(CYAN)Models:$(NC) Ovi, HunyuanVideo, HoloCine, CogVideoX"; \
+			echo "  $(CYAN)Models:$(NC) Ovi, CogVideoX, Wan 2.2"; \
 		elif [ "$$TYPE" = "p3dn.24xlarge" ]; then \
 			echo "  $(CYAN)Models:$(NC) Large models requiring 32GB+ VRAM/GPU"; \
 		fi
@@ -180,24 +180,12 @@ video-status: ## Show detailed server status (requires server running)
 		IP=$$(terraform output -raw public_ip 2>/dev/null) && \
 		ssh -i ~/.ssh/id_rsa ubuntu@$$IP "video-status"
 
-download-models: ## Download all 3 main models (HoloCine, HunyuanVideo, Wan 2.2)
+download-models: ## Download Wan 2.2 model (~20GB)
 	@echo "$(CYAN)📥 Downloading main AI models...$(NC)"
-	@echo "$(YELLOW)⚠️  This will download ~75GB and take 30-60 minutes$(NC)"
+	@echo "$(YELLOW)⚠️  This will download ~20GB and take 15-30 minutes$(NC)"
 	@cd ansible && \
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags download-models
-
-setup-hunyuan: ## Setup HunyuanVideo (720p, multi-GPU support)
-	@echo "$(CYAN)🎬 Setting up HunyuanVideo...$(NC)"
-	@cd ansible && \
-		ANSIBLE_HOST_KEY_CHECKING=False \
-		ansible-playbook -i inventory.yml playbook.yml --tags setup-hunyuan
-
-test-hunyuan: ## Create HunyuanVideo test script on server
-	@echo "$(CYAN)🧪 Setting up HunyuanVideo test...$(NC)"
-	@cd ansible && \
-		ANSIBLE_HOST_KEY_CHECKING=False \
-		ansible-playbook -i inventory.yml playbook.yml --tags test-hunyuan
 
 debug-torch: ## Debug PyTorch installation and versions
 	@echo "$(CYAN)🔍 Debugging PyTorch installation...$(NC)"

@@ -240,8 +240,8 @@
       if [ -z "$MODEL" ]; then
         echo "Usage: download-model <model-name>"
         echo "Examples:"
-        echo "  download-model tencent/HunyuanVideo"
-        echo "  download-model yihao-meng/HoloCine"
+        echo "  download-model feizhengcong/Ovi"
+        echo "  download-model THUDM/CogVideoX-5b"
         exit 1
       fi
       cd {{ models_dir }}

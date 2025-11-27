@@ -1,6 +1,6 @@
 # Revalida Video Generator
 
-AWS-based infrastructure for self-hosted AI video generation using models like HunyuanVideo, HoloCine, CogVideoX, and Ovi.
+AWS-based infrastructure for self-hosted AI video generation using models like CogVideoX and Ovi.
 
 ## 🚀 Quick Start
 
@@ -42,7 +42,7 @@ This project provides **complete automation** for deploying and managing a GPU s
 
 | Instance | Spot | On-Demand | Best For |
 |----------|------|-----------|----------|
-| g5.12xlarge | ~$1.70/h | ~$5.67/h | Ovi, HunyuanVideo, HoloCine |
+| g5.12xlarge | ~$1.70/h | ~$5.67/h | Ovi, CogVideoX |
 | p3dn.24xlarge | ~$10/h | ~$31/h | Large models (32GB+ VRAM) |
 
 - **Stopped:** $0/hour (both instances)
@@ -119,7 +119,7 @@ Switch between instance types based on your needs:
 
 | Instance | GPUs | VRAM/GPU | Cost (Spot) | Best For |
 |----------|------|----------|-------------|----------|
-| g5.12xlarge | 4x A10G | 24GB | ~$1.70/h | Ovi, HunyuanVideo, HoloCine |
+| g5.12xlarge | 4x A10G | 24GB | ~$1.70/h | Ovi, CogVideoX |
 | p3dn.24xlarge | 8x V100 | 32GB | ~$10/h | Large models (32GB+ VRAM) |
 
 ```bash
@@ -183,20 +183,16 @@ make download-models
 ```
 
 This downloads:
-- **HoloCine** (~30GB) - Multi-shot with character consistency
-- **HunyuanVideo** (~25GB) - Best quality, supports LoRA
 - **Wan 2.2** (~20GB) - Most versatile (T2V + I2V)
 - **Ovi** (~70GB) - Video + synchronized audio generation
 
 **Option 2: Download specific model**
 ```bash
 # From your local machine
-make download-model MODEL=tencent/HunyuanVideo
+make download-model MODEL=THUDM/CogVideoX-5b
 
 # or SSH into server
 ssh ubuntu@<IP>
-download-model tencent/HunyuanVideo
-download-model yihao-meng/HoloCine
 download-model THUDM/CogVideoX-5b
 download-model feizhengcong/Ovi
 ```
@@ -204,8 +200,6 @@ download-model feizhengcong/Ovi
 ### Generate Videos
 
 **Quick start guides for each model:**
-- 📖 **[HoloCine](docs/HOLOCINE.md)** - Multi-shot narrative videos
-- 📖 **[HunyuanVideo](docs/HUNYUANVIDEO.md)** - Highest quality, LoRA support
 - 📖 **[Wan 2.2](docs/WAN22.md)** - Text-to-Video & Image-to-Video
 - 📖 **[Ovi](#ovi-video--audio)** - Video with synchronized audio
 
@@ -221,9 +215,9 @@ venv
 cd /mnt/output
 python generate_hunyuan.py
 
-# Or use HoloCine for multi-shot
-cd /mnt/models/HoloCine/code
-python HoloCine_inference_full_attention.py
+# Or use CogVideoX
+cd /mnt/models/CogVideoX
+python test_cogvideox.py
 ```
 
 ### Ovi (Video + Audio)
@@ -434,8 +428,7 @@ revalida-video-generator/
 │   ├── deploy.yml       # Orchestrator playbook
 │   ├── playbook.yml     # Server setup
 │   └── tasks/           # Reusable tasks
-└── docs/
-    └── analise-modelos-text-to-video.md  # Model analysis
+└── docs/                 # Documentation
 ```
 
 ## 🔐 Security
@@ -447,24 +440,19 @@ revalida-video-generator/
 
 ## 🎯 Recommended Models
 
-Based on analysis in `docs/analise-modelos-text-to-video.md`:
-
-**Best Overall Quality:**
-- HunyuanVideo (1280×720, 30 FPS, 5s)
-- With LoRA training for character consistency
-
-**Best for Long Videos:**
-- HoloCine-14B (720×480, 16 FPS, up to 60s)
-- Native multi-shot support
-
-**Most Versatile:**
-- Wan 2.2 (supports both text-to-video and image-to-video)
+Recommended models for this project:
 
 **Best for Video + Audio + Character Consistency:**
 - Ovi (720×720 or 960×960, 5-10s)
 - Generates synchronized audio with video in single pass
 - **I2V mode:** Use your character image for consistent talking head videos
 - Perfect for speech, narration, music, sound effects
+
+**Most Versatile:**
+- Wan 2.2 (supports both text-to-video and image-to-video)
+
+**Best Quality/Performance Balance:**
+- CogVideoX-5B (720p, multi-GPU support with xDiT)
 
 ## 💡 Tips
 
@@ -509,7 +497,6 @@ make destroy && make deploy
 
 - `terraform/README.md` - Infrastructure details
 - `ansible/README.md` - Configuration details
-- `docs/analise-modelos-text-to-video.md` - Model comparison (Portuguese)
 - `CLAUDE.md` - For Claude Code AI assistant
 
 ## 🤝 Contributing
@@ -530,4 +517,4 @@ MIT
 
 **Created with:** Terraform + Ansible + Make
 **GPU:** NVIDIA A10G (4x on G5.12xlarge)
-**Models:** HunyuanVideo, HoloCine, CogVideoX, Ovi
+**Models:** CogVideoX, Ovi

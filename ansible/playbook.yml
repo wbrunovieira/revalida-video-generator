@@ -99,31 +99,15 @@
         force: yes
       when: "'ext4' not in models_volume_check.stdout and ': data' in models_volume_check.stdout"
 
-    - name: Check if output volume is formatted
-      shell: file -s /dev/nvme2n1
-      register: output_volume_check
-      changed_when: false
-      ignore_errors: yes
-
-    - name: Format output volume if needed
-      filesystem:
-        fstype: ext4
-        dev: /dev/nvme2n1
-        force: yes
-      when: "'ext4' not in output_volume_check.stdout and ': data' in output_volume_check.stdout"
-
-    - name: Create mount points
+    - name: Create mount point for models
       file:
-        path: "{{ item }}"
+        path: "{{ models_dir }}"
         state: directory
         owner: ubuntu
         group: ubuntu
         mode: '0755'
-      loop:
-        - "{{ models_dir }}"
-        - "{{ output_dir }}"
 
-    - name: Mount models volume
+    - name: Mount models volume (nvme1n1 - 200GB)
       mount:
         path: "{{ models_dir }}"
         src: /dev/nvme1n1
@@ -131,23 +115,78 @@
         opts: defaults,nofail
         state: mounted
 
-    - name: Mount output volume
-      mount:
+    - name: Set ownership for models volume
+      file:
+        path: "{{ models_dir }}"
+        owner: ubuntu
+        group: ubuntu
+        recurse: yes
+
+    - name: Create output directory (on root volume)
+      file:
         path: "{{ output_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    # ============================================
+    # STEP 2.5: MOUNT ADDITIONAL 500GB EBS VOLUME
+    # ============================================
+    - name: Check if nvme2n1 exists (500GB volume)
+      stat:
+        path: /dev/nvme2n1
+      register: nvme2n1_exists
+
+    - name: Check if additional volume is formatted
+      shell: file -s /dev/nvme2n1
+      register: additional_volume_check
+      changed_when: false
+      ignore_errors: yes
+      when: nvme2n1_exists.stat.exists
+
+    - name: Format additional 500GB volume if needed
+      filesystem:
+        fstype: ext4
+        dev: /dev/nvme2n1
+        force: yes
+      when:
+        - nvme2n1_exists.stat.exists
+        - "'ext4' not in additional_volume_check.stdout"
+        - "': data' in additional_volume_check.stdout"
+
+    - name: Create mount point for additional models storage
+      file:
+        path: /mnt/models2
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      when: nvme2n1_exists.stat.exists
+
+    - name: Mount additional 500GB volume
+      mount:
+        path: /mnt/models2
         src: /dev/nvme2n1
         fstype: ext4
         opts: defaults,nofail
         state: mounted
+      when: nvme2n1_exists.stat.exists
 
-    - name: Set ownership for mounted volumes
+    - name: Set ownership for additional models volume
       file:
-        path: "{{ item }}"
+        path: /mnt/models2
         owner: ubuntu
         group: ubuntu
         recurse: yes
-      loop:
-        - "{{ models_dir }}"
-        - "{{ output_dir }}"
+      when: nvme2n1_exists.stat.exists
+
+    - name: Display additional volume status
+      debug:
+        msg: |
+          📦 Additional Storage:
+          - /mnt/models2 (500GB) - {{ 'Mounted' if nvme2n1_exists.stat.exists else 'Not available' }}
+      when: nvme2n1_exists.stat.exists
 
     # ============================================
     # STEP 3: VERIFY GPU (if present)
@@ -305,7 +344,7 @@
             echo ""
             echo "Examples:"
             echo "  download-model tencent/HunyuanVideo"
-            echo "  download-model yihao-meng/HoloCine"
+            echo "  download-model feizhengcong/Ovi"
             echo "  download-model THUDM/CogVideoX-5b"
             echo ""
             exit 1
@@ -327,16 +366,6 @@
     - name: Include model download tasks
       import_tasks: tasks/download-models.yml
       tags: [download-models, never]  # never = only runs when explicitly requested
-
-    # Run with: ansible-playbook playbook.yml --tags setup-hunyuan
-    - name: Include HunyuanVideo setup tasks
-      import_tasks: tasks/setup-hunyuan.yml
-      tags: [setup-hunyuan, never]  # never = only runs when explicitly requested
-
-    # Run with: ansible-playbook playbook.yml --tags test-hunyuan
-    - name: Include HunyuanVideo test tasks
-      import_tasks: tasks/test-hunyuan.yml
-      tags: [test-hunyuan, never]  # never = only runs when explicitly requested
 
     # Run with: ansible-playbook playbook.yml --tags debug-torch
     - name: Include PyTorch debug tasks

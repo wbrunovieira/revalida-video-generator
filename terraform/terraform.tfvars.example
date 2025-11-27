@@ -37,7 +37,7 @@ output_volume_size = 20    # Minimal
 #
 # # Full storage for production
 # root_volume_size   = 100   # OS and software
-# models_volume_size = 500   # AI models (HunyuanVideo ~25GB, HoloCine ~30GB, etc)
+# models_volume_size = 500   # AI models (Ovi ~91GB, Wan ~30GB, CogVideoX ~25GB)
 # output_volume_size = 200   # Generated videos
 
 # ==========================================

@@ -87,7 +87,7 @@ dlmodel() {
         echo ""
         echo "Examples:"
         echo "  dlmodel tencent/HunyuanVideo"
-        echo "  dlmodel yihao-meng/HoloCine"
+        echo "  dlmodel feizhengcong/Ovi"
         echo "  dlmodel THUDM/CogVideoX-5b"
         return 1
     fi

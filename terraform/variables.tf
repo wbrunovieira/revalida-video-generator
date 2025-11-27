@@ -58,7 +58,7 @@ variable "instance_presets" {
       type         = "g5.12xlarge"
       gpus         = "4x A10G"
       vram_per_gpu = 24
-      description  = "Standard - Ovi, HunyuanVideo, HoloCine"
+      description  = "Standard - Ovi, CogVideoX, Wan 2.2"
       spot_price   = "~$1.70/h"
     }
     "p3dn" = {
@@ -93,7 +93,7 @@ variable "root_volume_size" {
 variable "models_volume_size" {
   description = "EBS volume size in GB for AI models"
   type        = number
-  default     = 500 # HunyuanVideo 25GB + HoloCine 30GB + Wan 30GB + extras
+  default     = 500 # Ovi ~91GB + Wan 30GB + CogVideoX ~25GB + extras
 }
 
 variable "output_volume_size" {

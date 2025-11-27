@@ -145,8 +145,8 @@ pip install torch diffusers transformers
 └── ...
 
 /mnt/models/                       # AI models (500GB EBS)
-├── HunyuanVideo/
-├── HoloCine/
+├── Ovi/
+├── Wan2.2/
 └── CogVideoX-5b/
 
 /mnt/output/                       # Generated videos (200GB EBS)

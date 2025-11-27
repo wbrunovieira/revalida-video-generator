@@ -1,6 +1,6 @@
 ---
 # Download AI models for video generation
-# This task downloads the 3 main models: HoloCine, HunyuanVideo, and Wan 2.2
+# This task downloads the main model: Wan 2.2
 # Run with: ansible-playbook playbook.yml --tags download-models
 
 - name: Display model download banner
@@ -9,12 +9,10 @@
       ==========================================
       📥 DOWNLOADING AI MODELS
       ==========================================
-      This will download ~75GB of models:
-      1. HoloCine (~30GB)
-      2. HunyuanVideo (~25GB)
-      3. Wan 2.2 (~20GB)
+      This will download ~20GB of models:
+      1. Wan 2.2 (~20GB)
 
-      This may take 30-60 minutes depending on connection
+      This may take 15-30 minutes depending on connection
       ==========================================
 
 # ============================================
@@ -43,146 +41,6 @@
     create: yes
     owner: ubuntu
     group: ubuntu
-  tags: [download-models]
-
-# ============================================
-# HOLOCINE MODEL
-# ============================================
-- name: Create HoloCine directories
-  file:
-    path: "{{ models_dir }}/HoloCine/{{ item }}"
-    state: directory
-    owner: ubuntu
-    group: ubuntu
-    mode: '0755'
-  loop:
-    - checkpoints/Wan2.2-T2V-A14B/Wan2.2-T2V-A14B
-    - checkpoints/HoloCine_dit/full
-    - checkpoints/HoloCine_dit/sparse
-  tags: [download-models]
-
-- name: Download complete Wan 2.2 model for HoloCine
-  shell: |
-    export HF_HOME={{ models_dir }}/.cache
-    . {{ app_dir }}/venv/bin/activate
-    huggingface-cli download Wan-AI/Wan2.2-T2V-A14B \
-      --local-dir {{ models_dir }}/HoloCine/checkpoints/Wan2.2-T2V-A14B/Wan2.2-T2V-A14B
-  become_user: ubuntu
-  args:
-    executable: /bin/bash
-    creates: "{{ models_dir }}/HoloCine/checkpoints/Wan2.2-T2V-A14B/Wan2.2-T2V-A14B/models_t5_umt5-xxl-enc-bf16.pth"
-  tags: [download-models]
-
-- name: Download HoloCine DiT checkpoints (full attention)
-  shell: |
-    export HF_HOME={{ models_dir }}/.cache
-    . {{ app_dir }}/venv/bin/activate
-    huggingface-cli download hlwang06/HoloCine \
-      HoloCine_dit/full/full_high_noise.safetensors \
-      HoloCine_dit/full/full_low_noise.safetensors \
-      --local-dir {{ models_dir }}/HoloCine/checkpoints \
-      --local-dir-use-symlinks False
-  become_user: ubuntu
-  args:
-    executable: /bin/bash
-    creates: "{{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/full/full_high_noise.safetensors"
-  tags: [download-models]
-
-- name: Download HoloCine DiT checkpoints (sparse attention)
-  shell: |
-    export HF_HOME={{ models_dir }}/.cache
-    . {{ app_dir }}/venv/bin/activate
-    huggingface-cli download hlwang06/HoloCine \
-      HoloCine_dit/sparse/sparse_high_noise.safetensors \
-      HoloCine_dit/sparse/sparse_low_noise.safetensors \
-      --local-dir {{ models_dir }}/HoloCine/checkpoints \
-      --local-dir-use-symlinks False
-  become_user: ubuntu
-  args:
-    executable: /bin/bash
-    creates: "{{ models_dir }}/HoloCine/checkpoints/HoloCine_dit/sparse/sparse_high_noise.safetensors"
-  tags: [download-models]
-
-- name: Clone HoloCine repository
-  git:
-    repo: https://github.com/yihao-meng/HoloCine.git
-    dest: "{{ models_dir }}/HoloCine/code"
-    version: main
-    force: yes
-  become_user: ubuntu
-  tags: [download-models]
-
-- name: Create symlink from code/checkpoints to checkpoints directory
-  file:
-    src: "{{ models_dir }}/HoloCine/checkpoints"
-    dest: "{{ models_dir }}/HoloCine/code/checkpoints"
-    state: link
-    owner: ubuntu
-    group: ubuntu
-  tags: [download-models]
-
-- name: Remove old backup of HoloCine inference file if exists
-  file:
-    path: "{{ models_dir }}/HoloCine/code/HoloCine_inference_full_attention.py.bak"
-    state: absent
-  tags: [download-models]
-
-- name: Restore HoloCine inference file from git
-  shell: |
-    cd {{ models_dir }}/HoloCine/code
-    git checkout HoloCine_inference_full_attention.py
-  become_user: ubuntu
-  args:
-    executable: /bin/bash
-  ignore_errors: yes
-  tags: [download-models]
-
-- name: Fix HoloCine to prevent double pipeline creation (comment lines 188-999)
-  shell: |
-    sed -i.bak '188,999s/^/# /' {{ models_dir }}/HoloCine/code/HoloCine_inference_full_attention.py
-  args:
-    creates: "{{ models_dir }}/HoloCine/code/HoloCine_inference_full_attention.py.bak"
-  tags: [download-models]
-
-- name: Install HoloCine Python requirements
-  pip:
-    requirements: "{{ models_dir }}/HoloCine/code/requirements.txt"
-    virtualenv: "{{ app_dir }}/venv"
-  become_user: ubuntu
-  tags: [download-models, install-holocine-deps]
-
-- name: Display HoloCine download complete
-  debug:
-    msg: "✅ HoloCine downloaded successfully"
-  tags: [download-models]
-
-# ============================================
-# HUNYUANVIDEO MODEL
-# ============================================
-- name: Create HunyuanVideo directory
-  file:
-    path: "{{ models_dir }}/HunyuanVideo"
-    state: directory
-    owner: ubuntu
-    group: ubuntu
-    mode: '0755'
-  tags: [download-models]
-
-- name: Download HunyuanVideo model
-  shell: |
-    export HF_HOME={{ models_dir }}/.cache
-    . {{ app_dir }}/venv/bin/activate
-    huggingface-cli download tencent/HunyuanVideo \
-      --local-dir {{ models_dir }}/HunyuanVideo
-  become_user: ubuntu
-  args:
-    executable: /bin/bash
-    creates: "{{ models_dir }}/HunyuanVideo/model_index.json"
-  tags: [download-models]
-
-- name: Display HunyuanVideo download complete
-  debug:
-    msg: "✅ HunyuanVideo downloaded successfully"
   tags: [download-models]
 
 # ============================================
@@ -234,8 +92,6 @@
       ==========================================
 
       See documentation in docs/ for usage instructions:
-      - docs/HOLOCINE.md
-      - docs/HUNYUANVIDEO.md
       - docs/WAN22.md
       ==========================================
   tags: [download-models]
