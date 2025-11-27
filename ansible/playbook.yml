@@ -368,16 +368,6 @@
       import_tasks: tasks/fix-ovi-helper.yml
       tags: [fix-ovi-helper, never]  # never = only runs when explicitly requested
 
-    # Run with: ansible-playbook playbook.yml --tags setup-longcat
-    - name: Include LongCat setup tasks
-      import_tasks: tasks/setup-longcat.yml
-      tags: [setup-longcat, never]  # never = only runs when explicitly requested
-
-    # Run with: ansible-playbook playbook.yml --tags test-longcat
-    - name: Include LongCat test tasks
-      import_tasks: tasks/test-longcat.yml
-      tags: [test-longcat, never]  # never = only runs when explicitly requested
-
     # ============================================
     # STEP 8: FINAL CHECKS & DISPLAY
     # ============================================

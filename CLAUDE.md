@@ -21,7 +21,6 @@ make download-models     # Download all 3 main models (~75GB)
 make setup-hunyuan       # Setup HunyuanVideo (720p, multi-GPU)
 make setup-cogvideox     # Setup CogVideoX-5B with xDiT
 make setup-ovi           # Setup Ovi (video+audio generation)
-make setup-longcat       # Setup LongCat-Video (T2V, I2V, continuation)
 
 # Video Sync
 make sync-videos         # Sync videos to ~/Videos/revalida/
@@ -38,7 +37,6 @@ make debug-torch         # Debug PyTorch installation
 make test-hunyuan        # Create HunyuanVideo test script
 make test-cogvideox      # Create CogVideoX test script
 make test-ovi            # Create Ovi test script
-make test-longcat        # Create LongCat test script
 ```
 
 ## Repository Structure
@@ -54,7 +52,6 @@ revalida-video-generator/
 │       ├── setup-hunyuan.yml
 │       ├── setup-cogvideox.yml
 │       ├── setup-ovi.yml
-│       ├── setup-longcat.yml
 │       └── download-models.yml
 ├── video_configs/           # JSON configs for HoloCine batch generation
 ├── generate_parallel.sh     # Multi-GPU parallel video generation

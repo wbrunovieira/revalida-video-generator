@@ -65,7 +65,7 @@ variable "instance_presets" {
       type         = "p3dn.24xlarge"
       gpus         = "8x V100"
       vram_per_gpu = 32
-      description  = "LongCat - Large models (32GB VRAM/GPU)"
+      description  = "Large models (32GB VRAM/GPU)"
       spot_price   = "~$10/h"
     }
   }

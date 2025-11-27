@@ -37,7 +37,7 @@ start: ## Start the server (interactive instance selection)
 	@echo "     $(CYAN)Best for: Ovi, HunyuanVideo, HoloCine, CogVideoX$(NC)"
 	@echo ""
 	@echo "  $(GREEN)2)$(NC) p3dn.24xlarge - 8x V100 (32GB each) - ~$$10/h spot"
-	@echo "     $(CYAN)Best for: LongCat-Video (requires 32GB+ VRAM/GPU)$(NC)"
+	@echo "     $(CYAN)Best for: Large models requiring 32GB+ VRAM/GPU$(NC)"
 	@echo ""
 	@read -p "Choice [1-2, default=1]: " choice; \
 	case "$$choice" in \
@@ -78,7 +78,7 @@ start-g5: ## Start with g5.12xlarge (4x A10G, 24GB each)
 		fi && \
 		echo "$(GREEN)✅ g5.12xlarge ready$(NC)"
 
-start-p3dn: ## Start with p3dn.24xlarge (8x V100, 32GB each) - for LongCat
+start-p3dn: ## Start with p3dn.24xlarge (8x V100, 32GB each)
 	@echo "$(CYAN)▶️  Starting p3dn.24xlarge...$(NC)"
 	@cd terraform && \
 		CURRENT_TYPE=$$(terraform output -raw instance_type 2>/dev/null || echo "none"); \
@@ -139,7 +139,7 @@ status: ## Show server status
 		if [ "$$TYPE" = "g5.12xlarge" ]; then \
 			echo "  $(CYAN)Models:$(NC) Ovi, HunyuanVideo, HoloCine, CogVideoX"; \
 		elif [ "$$TYPE" = "p3dn.24xlarge" ]; then \
-			echo "  $(CYAN)Models:$(NC) LongCat-Video + all others"; \
+			echo "  $(CYAN)Models:$(NC) Large models requiring 32GB+ VRAM/GPU"; \
 		fi
 
 ssh: ## SSH into the server
@@ -234,18 +234,6 @@ fix-ovi: ## Fix Ovi helper scripts (run if prompts not working)
 	@cd ansible && \
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags fix-ovi-helper
-
-setup-longcat: ## Setup LongCat-Video (T2V, I2V, Video-Continuation, Long Videos)
-	@echo "$(CYAN)🐱 Setting up LongCat-Video...$(NC)"
-	@cd ansible && \
-		ANSIBLE_HOST_KEY_CHECKING=False \
-		ansible-playbook -i inventory.yml playbook.yml --tags setup-longcat
-
-test-longcat: ## Test LongCat-Video installation
-	@echo "$(CYAN)🧪 Testing LongCat-Video...$(NC)"
-	@cd ansible && \
-		ANSIBLE_HOST_KEY_CHECKING=False \
-		ansible-playbook -i inventory.yml playbook.yml --tags test-longcat
 
 download-model: ## Download a specific model (usage: make download-model MODEL=tencent/HunyuanVideo)
 	@if [ -z "$(MODEL)" ]; then \
