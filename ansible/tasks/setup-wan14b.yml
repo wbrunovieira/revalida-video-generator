@@ -5,6 +5,107 @@
 # Creates: /mnt/models/Wan14B-venv (isolated virtualenv)
 # Used by: generate-video.sh when model=wan14b
 
+# ============================================
+# STEP 0: ENSURE STORAGE IS AVAILABLE
+# Handle Deep Learning AMI LVM vs regular EBS
+# ============================================
+- name: Check if LVM ephemeral storage is available (Deep Learning AMI)
+  stat:
+    path: /opt/dlami/nvme
+  register: dlami_nvme_check
+  tags: [setup-wan14b]
+
+- name: Check available space on /opt/dlami/nvme
+  shell: df -BG /opt/dlami/nvme 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G'
+  register: dlami_space
+  when: dlami_nvme_check.stat.exists
+  changed_when: false
+  ignore_errors: yes
+  tags: [setup-wan14b]
+
+- name: Check if /mnt/models is a real mount (not on root)
+  shell: |
+    MOUNT_DEVICE=$(df /mnt/models 2>/dev/null | tail -1 | awk '{print $1}')
+    ROOT_DEVICE=$(df / | tail -1 | awk '{print $1}')
+    if [ "$MOUNT_DEVICE" = "$ROOT_DEVICE" ]; then
+      echo "on_root"
+    else
+      echo "separate_mount"
+    fi
+  register: mnt_models_check
+  changed_when: false
+  ignore_errors: yes
+  tags: [setup-wan14b]
+
+- name: Display storage detection
+  debug:
+    msg: |
+      🔍 Storage Detection:
+         - /opt/dlami/nvme exists: {{ dlami_nvme_check.stat.exists }}
+         - DLAMI space available: {{ dlami_space.stdout | default('N/A') }}GB
+         - /mnt/models status: {{ mnt_models_check.stdout | default('unknown') }}
+  tags: [setup-wan14b]
+
+# Use DLAMI storage if /mnt/models is on root and DLAMI has space
+- name: Create models directory on DLAMI storage
+  file:
+    path: /opt/dlami/nvme/models
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  when:
+    - dlami_nvme_check.stat.exists
+    - mnt_models_check.stdout == "on_root"
+    - (dlami_space.stdout | default('0') | int) > 100
+  tags: [setup-wan14b]
+
+- name: Remove /mnt/models if it's just a directory on root
+  file:
+    path: /mnt/models
+    state: absent
+  when:
+    - dlami_nvme_check.stat.exists
+    - mnt_models_check.stdout == "on_root"
+    - (dlami_space.stdout | default('0') | int) > 100
+  ignore_errors: yes
+  tags: [setup-wan14b]
+
+- name: Create symlink /mnt/models -> /opt/dlami/nvme/models
+  file:
+    src: /opt/dlami/nvme/models
+    dest: /mnt/models
+    state: link
+    owner: ubuntu
+    group: ubuntu
+  when:
+    - dlami_nvme_check.stat.exists
+    - mnt_models_check.stdout == "on_root"
+    - (dlami_space.stdout | default('0') | int) > 100
+  tags: [setup-wan14b]
+
+- name: Display storage solution
+  debug:
+    msg: |
+      ✅ Storage configured:
+         {{ '/mnt/models -> /opt/dlami/nvme/models (symlink to 3.5TB DLAMI storage)' if (dlami_nvme_check.stat.exists and mnt_models_check.stdout == 'on_root') else '/mnt/models (EBS or existing mount)' }}
+  tags: [setup-wan14b]
+
+# Fallback: Create /mnt/models if it doesn't exist and no DLAMI
+- name: Ensure /mnt/models directory exists
+  file:
+    path: /mnt/models
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  when:
+    - not dlami_nvme_check.stat.exists or mnt_models_check.stdout != "on_root"
+  tags: [setup-wan14b]
+
+# ============================================
+# MAIN SETUP STARTS HERE
+# ============================================
 - name: Display Wan14B setup banner
   debug:
     msg: |
@@ -115,6 +216,9 @@
       - opencv-python
       - imageio
       - imageio-ffmpeg
+      - websocket-client
+      - requests
+      - Pillow
     virtualenv: "{{ models_dir }}/Wan14B-venv"
   become_user: ubuntu
   tags: [setup-wan14b]
@@ -151,6 +255,38 @@
   tags: [setup-wan14b]
 
 # ============================================
+# STEP 4.5: INSTALL COMFYUI-WANVIDEOWRAPPER
+# Contains: WanTextToVideo, WanImageToVideo nodes
+# ============================================
+- name: Check if WanVideoWrapper exists
+  stat:
+    path: "{{ models_dir }}/ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper"
+  register: wan_wrapper_check
+  tags: [setup-wan14b]
+
+- name: Clone ComfyUI-WanVideoWrapper (WAN video nodes)
+  git:
+    repo: https://github.com/kijai/ComfyUI-WanVideoWrapper.git
+    dest: "{{ models_dir }}/ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper"
+    version: main
+  become_user: ubuntu
+  when: not wan_wrapper_check.stat.exists
+  tags: [setup-wan14b]
+
+- name: Install WanVideoWrapper requirements
+  pip:
+    requirements: "{{ models_dir }}/ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper/requirements.txt"
+    virtualenv: "{{ models_dir }}/Wan14B-venv"
+  become_user: ubuntu
+  ignore_errors: yes
+  tags: [setup-wan14b]
+
+- name: Display WanVideoWrapper status
+  debug:
+    msg: "✅ ComfyUI-WanVideoWrapper installed (WanTextToVideo, WanImageToVideo nodes)"
+  tags: [setup-wan14b]
+
+# ============================================
 # STEP 5: CREATE DIRECTORIES FOR MODEL
 # ============================================
 - name: Create ComfyUI model directories
@@ -163,6 +299,7 @@
   loop:
     - "{{ models_dir }}/ComfyUI/models/checkpoints"
     - "{{ models_dir }}/ComfyUI/models/clip"
+    - "{{ models_dir }}/ComfyUI/models/clip_vision"
     - "{{ models_dir }}/ComfyUI/models/vae"
     - "{{ models_dir }}/ComfyUI/output"
   tags: [setup-wan14b]
@@ -223,6 +360,67 @@
   tags: [setup-wan14b]
 
 # ============================================
+# STEP 6.5: DOWNLOAD CLIP VISION H MODEL
+# Required for I2V workflow (image conditioning)
+# WanImageToVideo needs CLIP-H (1280 dims), NOT CLIP-L/G (1024 dims)
+# ============================================
+- name: Check if CLIP Vision H model exists (open_clip format)
+  stat:
+    path: "{{ models_dir }}/ComfyUI/models/clip_vision/open_clip_pytorch_model.bin"
+  register: clip_vision_check
+  tags: [setup-wan14b]
+
+- name: Remove wrong CLIP model if present (CLIP-G instead of CLIP-H)
+  shell: |
+    cd {{ models_dir }}/ComfyUI/models/clip_vision
+    # Check if clip_vision_h.safetensors exists and is ~3.5GB (wrong model - CLIP-G)
+    if [ -f "clip_vision_h.safetensors" ]; then
+      SIZE=$(stat -c%s "clip_vision_h.safetensors" 2>/dev/null || stat -f%z "clip_vision_h.safetensors" 2>/dev/null)
+      # CLIP-G is ~3.5GB (3689911098 bytes), CLIP-H is ~3.9GB
+      if [ "$SIZE" -lt "3800000000" ]; then
+        echo "🗑️ Removing wrong CLIP model (CLIP-G/L instead of CLIP-H)..."
+        rm -f clip_vision_h.safetensors
+      fi
+    fi
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-wan14b]
+  ignore_errors: yes
+
+- name: Download CLIP Vision H model for I2V (laion/CLIP-ViT-H-14)
+  shell: |
+    source {{ models_dir }}/Wan14B-venv/bin/activate
+    cd {{ models_dir }}/ComfyUI/models/clip_vision
+    echo "📥 Downloading CLIP Vision H model (~3.9GB)..."
+    echo "   Source: laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
+    echo "   This is required for WanImageToVideo (1280 dimensions)"
+    # Download open_clip CLIP-H model (1280 dims) - correct for WAN I2V
+    wget -O open_clip_pytorch_model.bin \
+      "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K/resolve/main/open_clip_pytorch_model.bin" || \
+    huggingface-cli download laion/CLIP-ViT-H-14-laion2B-s32B-b79K \
+      open_clip_pytorch_model.bin \
+      --local-dir .
+    echo "✅ CLIP-H model downloaded"
+  become_user: ubuntu
+  when: not clip_vision_check.stat.exists
+  args:
+    executable: /bin/bash
+  async: 1800
+  poll: 30
+  tags: [setup-wan14b]
+  ignore_errors: yes
+
+- name: Display CLIP Vision status
+  debug:
+    msg: |
+      CLIP Vision H model: {{ 'Downloaded ✅' if clip_vision_check.stat.exists else 'Download attempted' }}
+      Location: {{ models_dir }}/ComfyUI/models/clip_vision/open_clip_pytorch_model.bin
+      Required for: WanImageToVideo node (I2V workflow)
+      Dimensions: 1280 (CLIP-H, NOT 1024 from CLIP-L/G)
+  tags: [setup-wan14b]
+
+# ============================================
 # STEP 7: DOWNLOAD MEGA WORKFLOW
 # ============================================
 - name: Download MEGA workflow from HuggingFace
@@ -243,6 +441,9 @@
 
 # ============================================
 # STEP 8: CREATE PYTHON GENERATION SCRIPT
+# Uses STANDARD ComfyUI nodes (CheckpointLoaderSimple)
+# The AllInOne model includes VAE + CLIP + Model all in one
+# Settings: CFG=1, 4 steps, euler_a/beta sampler
 # ============================================
 - name: Create Wan14B generation script
   copy:
@@ -251,25 +452,32 @@
       #!/usr/bin/env python3
       """
       WAN 2.2 14B Rapid AllInOne - Video Generation Script
-      Uses ComfyUI API for generation with 4-step inference
+      Uses STANDARD ComfyUI API (CheckpointLoaderSimple)
+      The AllInOne model has VAE+CLIP+Model all included.
+      Settings: CFG=1, 4 steps, euler_a sampler, beta scheduler
       """
       import os
       import sys
       import json
       import time
+      import uuid
       import argparse
       import subprocess
       import requests
-      from pathlib import Path
+      import base64
+      import websocket
+      from PIL import Image
+      from io import BytesIO
 
       COMFYUI_DIR = "{{ models_dir }}/ComfyUI"
       OUTPUT_DIR = "{{ output_dir }}"
       MODELS_DIR = "{{ models_dir }}"
+      SERVER_ADDRESS = "127.0.0.1:8188"
 
       def start_comfyui_server():
           """Start ComfyUI server if not running"""
           try:
-              response = requests.get("http://127.0.0.1:8188/system_stats", timeout=2)
+              response = requests.get(f"http://{SERVER_ADDRESS}/system_stats", timeout=2)
               if response.status_code == 200:
                   print("✅ ComfyUI server already running")
                   return True
@@ -281,130 +489,100 @@
           env["CUDA_VISIBLE_DEVICES"] = "0"
 
           proc = subprocess.Popen(
-              [f"{MODELS_DIR}/Wan14B-venv/bin/python", "main.py", "--listen", "127.0.0.1", "--port", "8188"],
+              [f"{MODELS_DIR}/Wan14B-venv/bin/python", "main.py", "--listen", "0.0.0.0", "--port", "8188"],
               cwd=COMFYUI_DIR,
               env=env,
-              stdout=subprocess.DEVNULL,
-              stderr=subprocess.DEVNULL
+              stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT
           )
 
           # Wait for server to start
-          for i in range(60):
+          for i in range(120):
               try:
-                  response = requests.get("http://127.0.0.1:8188/system_stats", timeout=2)
+                  response = requests.get(f"http://{SERVER_ADDRESS}/system_stats", timeout=2)
                   if response.status_code == 200:
                       print("✅ ComfyUI server started")
                       return True
               except:
                   pass
               time.sleep(1)
-              print(f"   Waiting for server... ({i+1}/60)")
+              print(f"   Waiting for server... ({i+1}/120)")
 
           print("❌ Failed to start ComfyUI server")
           return False
 
-      def generate_video_t2v(prompt: str, output_name: str = None):
-          """Generate T2V video using ComfyUI API"""
-
-          if not start_comfyui_server():
-              return None
-
-          print(f"📝 Prompt: {prompt}")
-
-          # T2V workflow with WanTextToVideo for video latent generation
-          workflow = {
-              "3": {
-                  "class_type": "CheckpointLoaderSimple",
-                  "inputs": {
-                      "ckpt_name": "wan2.2-t2v-rapid-aio.safetensors"
-                  }
-              },
-              "6": {
-                  "class_type": "CLIPTextEncode",
-                  "inputs": {
-                      "text": prompt,
-                      "clip": ["3", 1]
-                  }
-              },
-              "7": {
-                  "class_type": "CLIPTextEncode",
-                  "inputs": {
-                      "text": "",
-                      "clip": ["3", 1]
-                  }
-              },
-              "wan_t2v": {
-                  "class_type": "WanTextToVideo",
-                  "inputs": {
-                      "positive": ["6", 0],
-                      "negative": ["7", 0],
-                      "vae": ["3", 2],
-                      "width": 832,
-                      "height": 480,
-                      "length": 81,
-                      "batch_size": 1
-                  }
-              },
-              "13": {
-                  "class_type": "KSampler",
-                  "inputs": {
-                      "seed": int(time.time()) % 1000000,
-                      "steps": 4,
-                      "cfg": 1.0,
-                      "sampler_name": "euler_ancestral",
-                      "scheduler": "beta",
-                      "denoise": 1.0,
-                      "model": ["3", 0],
-                      "positive": ["wan_t2v", 0],
-                      "negative": ["wan_t2v", 1],
-                      "latent_image": ["wan_t2v", 2]
-                  }
-              },
-              "8": {
-                  "class_type": "VAEDecode",
-                  "inputs": {
-                      "samples": ["13", 0],
-                      "vae": ["3", 2]
-                  }
-              },
-              "video_combine": {
-                  "class_type": "VHS_VideoCombine",
-                  "inputs": {
-                      "images": ["8", 0],
-                      "frame_rate": 24,
-                      "loop_count": 0,
-                      "filename_prefix": output_name or "wan14b_t2v",
-                      "format": "video/h264-mp4",
-                      "pingpong": False,
-                      "save_output": True
-                  }
-              }
-          }
-
-          # Queue prompt
+      def queue_prompt(prompt):
+          """Queue a prompt and return the prompt_id"""
+          client_id = str(uuid.uuid4())
           response = requests.post(
-              "http://127.0.0.1:8188/prompt",
-              json={"prompt": workflow}
+              f"http://{SERVER_ADDRESS}/prompt",
+              json={"prompt": prompt, "client_id": client_id}
+          )
+          if response.status_code == 200:
+              return response.json().get("prompt_id"), client_id
+          else:
+              print(f"❌ Error queuing prompt: {response.text}")
+              return None, None
+
+      def wait_for_completion(prompt_id, client_id):
+          """Wait for prompt to complete using websocket"""
+          ws = websocket.WebSocket()
+          ws.connect(f"ws://{SERVER_ADDRESS}/ws?clientId={client_id}")
+
+          while True:
+              out = ws.recv()
+              if isinstance(out, str):
+                  message = json.loads(out)
+                  if message['type'] == 'executing':
+                      data = message['data']
+                      if data['node'] is None and data['prompt_id'] == prompt_id:
+                          break  # Execution complete
+                  elif message['type'] == 'progress':
+                      data = message['data']
+                      print(f"   Progress: {data['value']}/{data['max']}")
+          ws.close()
+          return True
+
+      def get_history(prompt_id):
+          """Get the history/outputs for a prompt"""
+          response = requests.get(f"http://{SERVER_ADDRESS}/history/{prompt_id}")
+          return response.json()
+
+      def upload_image(image_path):
+          """Upload image to ComfyUI input folder and return filename"""
+          with open(image_path, 'rb') as f:
+              image_data = f.read()
+
+          # Get just the filename
+          filename = os.path.basename(image_path)
+
+          files = {
+              'image': (filename, image_data, 'image/png')
+          }
+          response = requests.post(
+              f"http://{SERVER_ADDRESS}/upload/image",
+              files=files
           )
 
           if response.status_code == 200:
               result = response.json()
-              prompt_id = result.get("prompt_id")
-              print(f"📤 Queued prompt: {prompt_id}")
-
-              # Wait for completion
-              while True:
-                  history = requests.get(f"http://127.0.0.1:8188/history/{prompt_id}").json()
-                  if prompt_id in history:
-                      print("✅ Generation complete!")
-                      return history[prompt_id]
-                  time.sleep(1)
+              return result.get('name')
           else:
-              print(f"❌ Error: {response.text}")
+              print(f"❌ Failed to upload image: {response.text}")
               return None
 
-      def generate_video_i2v(prompt: str, image_path: str, output_name: str = None):
-          """Generate I2V video using ComfyUI API with WanImageToVideo"""
+      def generate_video_i2v(prompt: str, image_path: str, negative_prompt: str = "", output_name: str = None):
+          """
+          Generate I2V video using WAN 2.2 Rapid AllInOne model.
+          Based on Phr00t's official workflow from HuggingFace.
+
+          Key nodes:
+          - CheckpointLoaderSimple: loads model+vae+clip from AllInOne
+          - ModelSamplingSD3: scale=8.0 for proper model sampling
+          - CLIPVisionLoader + CLIPVisionEncode: for image conditioning
+          - WanImageToVideo: generates video latent (81 frames) from input image
+          - KSampler: steps=4, cfg=1, sa_solver sampler, beta scheduler
+          """
 
           if not start_comfyui_server():
               return None
@@ -412,120 +590,278 @@
           print(f"🖼️ Using image: {image_path}")
           print(f"📝 Prompt: {prompt}")
 
-          # Video workflow using WanImageToVideo node
-          # CheckpointLoader → CLIPTextEncode → LoadImage → WanImageToVideo → KSampler → VAEDecode → VHS_VideoCombine
+          # Upload image first
+          uploaded_filename = upload_image(image_path)
+          if not uploaded_filename:
+              print("❌ Failed to upload image")
+              return None
+          print(f"📤 Uploaded image as: {uploaded_filename}")
+
+          seed = int(time.time()) % 1000000
+          output_prefix = output_name or f"wan14b_i2v_{seed}"
+
+          # I2V workflow based on Phr00t's wan2.2-i2v-rapid-aio-example.json
+          # Uses WanImageToVideo node to generate 81 video frames from input image
           workflow = {
-              "3": {
+              # Node 1: Load checkpoint (model + vae + clip from AllInOne)
+              "1": {
                   "class_type": "CheckpointLoaderSimple",
                   "inputs": {
                       "ckpt_name": "wan2.2-i2v-rapid-aio.safetensors"
                   }
               },
-              "load_image": {
-                  "class_type": "LoadImage",
+              # Node 2: ModelSamplingSD3 with scale=8.0
+              "2": {
+                  "class_type": "ModelSamplingSD3",
                   "inputs": {
-                      "image": image_path
+                      "shift": 8.0,
+                      "model": ["1", 0]
                   }
               },
-              "6": {
+              # Node 3: Load input image
+              "3": {
+                  "class_type": "LoadImage",
+                  "inputs": {
+                      "image": uploaded_filename
+                  }
+              },
+              # Node 4: Positive prompt encoding
+              "4": {
                   "class_type": "CLIPTextEncode",
                   "inputs": {
                       "text": prompt,
-                      "clip": ["3", 1]
+                      "clip": ["1", 1]
                   }
               },
-              "7": {
+              # Node 5: Negative prompt encoding
+              "5": {
                   "class_type": "CLIPTextEncode",
                   "inputs": {
-                      "text": "",
-                      "clip": ["3", 1]
+                      "text": negative_prompt or "blurry, low quality, distorted, jittery",
+                      "clip": ["1", 1]
                   }
               },
-              "wan_i2v": {
+              # Node 6: CLIPVisionLoader - load CLIP-H vision model for image conditioning
+              # MUST use CLIP-H (1280 dims) from laion, NOT CLIP-G/L (1024 dims)
+              "6": {
+                  "class_type": "CLIPVisionLoader",
+                  "inputs": {
+                      "clip_name": "open_clip_pytorch_model.bin"
+                  }
+              },
+              # Node 7: CLIPVisionEncode - encode image with CLIP vision
+              "7": {
+                  "class_type": "CLIPVisionEncode",
+                  "inputs": {
+                      "crop": "center",
+                      "clip_vision": ["6", 0],
+                      "image": ["3", 0]
+                  }
+              },
+              # Node 8: WanImageToVideo - KEY NODE that generates video latent
+              # This creates 81 frames from the input image
+              # Requires: positive, negative (from CLIPTextEncode), batch_size, start_image, clip_vision_output, vae
+              "8": {
                   "class_type": "WanImageToVideo",
                   "inputs": {
-                      "positive": ["6", 0],
-                      "negative": ["7", 0],
-                      "vae": ["3", 2],
-                      "width": 832,
-                      "height": 480,
+                      "width": 640,
+                      "height": 640,
                       "length": 81,
                       "batch_size": 1,
-                      "start_image": ["load_image", 0]
+                      "vae": ["1", 2],
+                      "start_image": ["3", 0],
+                      "clip_vision_output": ["7", 0],
+                      "positive": ["4", 0],
+                      "negative": ["5", 0]
                   }
               },
-              "13": {
+              # Node 9: KSampler - sampling with 4 steps, cfg=1, sa_solver
+              # WanImageToVideo outputs: 0=positive(CONDITIONING), 1=negative(CONDITIONING), 2=latent(LATENT)
+              "9": {
                   "class_type": "KSampler",
                   "inputs": {
-                      "seed": int(time.time()) % 1000000,
+                      "seed": seed,
+                      "steps": 4,
+                      "cfg": 1.0,
+                      "sampler_name": "sa_solver",
+                      "scheduler": "beta",
+                      "denoise": 1.0,
+                      "model": ["2", 0],
+                      "positive": ["8", 0],
+                      "negative": ["8", 1],
+                      "latent_image": ["8", 2]
+                  }
+              },
+              # Node 10: VAEDecode - decode latents to video frames
+              "10": {
+                  "class_type": "VAEDecode",
+                  "inputs": {
+                      "samples": ["9", 0],
+                      "vae": ["1", 2]
+                  }
+              },
+              # Node 11: VHS_VideoCombine - combine frames into video
+              "11": {
+                  "class_type": "VHS_VideoCombine",
+                  "inputs": {
+                      "images": ["10", 0],
+                      "frame_rate": 24,
+                      "loop_count": 0,
+                      "filename_prefix": output_prefix,
+                      "format": "video/h264-mp4",
+                      "pingpong": False,
+                      "save_output": True,
+                      "pix_fmt": "yuv420p",
+                      "crf": 19,
+                      "save_metadata": True
+                  }
+              }
+          }
+
+          prompt_id, client_id = queue_prompt(workflow)
+          if not prompt_id:
+              return None
+
+          print(f"📤 Queued prompt: {prompt_id}")
+          print("⏳ Generating video (4 steps)...")
+
+          wait_for_completion(prompt_id, client_id)
+
+          print("✅ Generation complete!")
+
+          # Get output info
+          history = get_history(prompt_id)
+          if prompt_id in history:
+              outputs = history[prompt_id].get('outputs', {})
+              for node_id, output in outputs.items():
+                  if 'gifs' in output:
+                      for gif in output['gifs']:
+                          print(f"📹 Output: {gif['filename']}")
+
+          return history.get(prompt_id)
+
+      def generate_video_t2v(prompt: str, negative_prompt: str = "", output_name: str = None):
+          """Generate T2V video - Note: T2V with standard nodes requires EmptyLatentVideo"""
+
+          if not start_comfyui_server():
+              return None
+
+          print(f"📝 Prompt: {prompt}")
+          print("⚠️ Note: T2V requires WanVideoWrapper nodes for proper video generation")
+          print("   For best T2V results, use the ComfyUI UI directly or use I2V with a generated first frame")
+
+          seed = int(time.time()) % 1000000
+          output_prefix = output_name or f"wan14b_t2v_{seed}"
+
+          # For T2V, we need WanVideoWrapper nodes for proper latent handling
+          # Using standard KSampler won't produce video output properly
+          # This is a placeholder - real T2V needs WanVideoWrapper
+          workflow = {
+              "1": {
+                  "class_type": "CheckpointLoaderSimple",
+                  "inputs": {
+                      "ckpt_name": "wan2.2-t2v-rapid-aio.safetensors"
+                  }
+              },
+              "2": {
+                  "class_type": "CLIPTextEncode",
+                  "inputs": {
+                      "text": prompt,
+                      "clip": ["1", 1]
+                  }
+              },
+              "3": {
+                  "class_type": "CLIPTextEncode",
+                  "inputs": {
+                      "text": negative_prompt or "blurry, low quality, distorted",
+                      "clip": ["1", 1]
+                  }
+              },
+              "4": {
+                  "class_type": "EmptyLatentImage",
+                  "inputs": {
+                      "width": 832,
+                      "height": 480,
+                      "batch_size": 81
+                  }
+              },
+              "5": {
+                  "class_type": "KSampler",
+                  "inputs": {
+                      "seed": seed,
                       "steps": 4,
                       "cfg": 1.0,
                       "sampler_name": "euler_ancestral",
                       "scheduler": "beta",
                       "denoise": 1.0,
-                      "model": ["3", 0],
-                      "positive": ["wan_i2v", 0],
-                      "negative": ["wan_i2v", 1],
-                      "latent_image": ["wan_i2v", 2]
+                      "model": ["1", 0],
+                      "positive": ["2", 0],
+                      "negative": ["3", 0],
+                      "latent_image": ["4", 0]
                   }
               },
-              "8": {
+              "6": {
                   "class_type": "VAEDecode",
                   "inputs": {
-                      "samples": ["13", 0],
-                      "vae": ["3", 2]
+                      "samples": ["5", 0],
+                      "vae": ["1", 2]
                   }
               },
-              "video_combine": {
+              "7": {
                   "class_type": "VHS_VideoCombine",
                   "inputs": {
-                      "images": ["8", 0],
+                      "images": ["6", 0],
                       "frame_rate": 24,
                       "loop_count": 0,
-                      "filename_prefix": output_name or "wan14b_i2v",
+                      "filename_prefix": output_prefix,
                       "format": "video/h264-mp4",
                       "pingpong": False,
-                      "save_output": True
+                      "save_output": True,
+                      "pix_fmt": "yuv420p",
+                      "crf": 19,
+                      "save_metadata": True
                   }
               }
           }
 
-          response = requests.post(
-              "http://127.0.0.1:8188/prompt",
-              json={"prompt": workflow}
-          )
-
-          if response.status_code == 200:
-              result = response.json()
-              prompt_id = result.get("prompt_id")
-              print(f"📤 Queued prompt: {prompt_id}")
-
-              while True:
-                  history = requests.get(f"http://127.0.0.1:8188/history/{prompt_id}").json()
-                  if prompt_id in history:
-                      print("✅ Generation complete!")
-                      return history[prompt_id]
-                  time.sleep(1)
-          else:
-              print(f"❌ Error: {response.text}")
+          prompt_id, client_id = queue_prompt(workflow)
+          if not prompt_id:
               return None
+
+          print(f"📤 Queued prompt: {prompt_id}")
+          print("⏳ Generating video (4 steps)...")
+
+          wait_for_completion(prompt_id, client_id)
+
+          print("✅ Generation complete!")
+
+          history = get_history(prompt_id)
+          if prompt_id in history:
+              outputs = history[prompt_id].get('outputs', {})
+              for node_id, output in outputs.items():
+                  if 'gifs' in output:
+                      for gif in output['gifs']:
+                          print(f"📹 Output: {gif['filename']}")
+
+          return history.get(prompt_id)
 
       if __name__ == "__main__":
           parser = argparse.ArgumentParser(description="WAN 14B Rapid Video Generation")
           parser.add_argument("mode", choices=["t2v", "i2v"], help="Generation mode")
           parser.add_argument("prompt", help="Text prompt")
           parser.add_argument("--image", "-i", help="Image path for I2V mode")
+          parser.add_argument("--negative", "-n", default="", help="Negative prompt")
           parser.add_argument("--output", "-o", help="Output filename prefix")
 
           args = parser.parse_args()
 
           if args.mode == "t2v":
-              generate_video_t2v(args.prompt, args.output)
+              generate_video_t2v(args.prompt, args.negative, args.output)
           elif args.mode == "i2v":
               if not args.image:
                   print("❌ I2V mode requires --image parameter")
                   sys.exit(1)
-              generate_video_i2v(args.prompt, args.image, args.output)
+              generate_video_i2v(args.prompt, args.image, args.negative, args.output)
     owner: ubuntu
     group: ubuntu
     mode: '0755'
