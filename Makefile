@@ -217,12 +217,6 @@ test-ovi: ## Create Ovi test scripts on server
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags test-ovi
 
-fix-ovi: ## Fix Ovi helper scripts (run if prompts not working)
-	@echo "$(CYAN)🔧 Fixing Ovi helper scripts...$(NC)"
-	@cd ansible && \
-		ANSIBLE_HOST_KEY_CHECKING=False \
-		ansible-playbook -i inventory.yml playbook.yml --tags fix-ovi-helper
-
 download-model: ## Download a specific model (usage: make download-model MODEL=tencent/HunyuanVideo)
 	@if [ -z "$(MODEL)" ]; then \
 		echo "$(RED)Error: MODEL not specified$(NC)"; \
@@ -270,6 +264,56 @@ clean: ## Clean temporary files
 	@find . -name ".terraform.lock.hcl" -delete
 	@rm -f terraform/tfplan
 	@echo "$(GREEN)✅ Clean complete$(NC)"
+
+# =============================================================================
+# Video Generation Commands
+# =============================================================================
+
+generate: ## Generate video (interactive mode)
+	@echo "$(CYAN)🎬 Video Generation$(NC)"
+	@echo ""
+	@echo "$(YELLOW)Select model:$(NC)"
+	@echo "  1) ovi      - Video + Audio sync (recommended)"
+	@echo "  2) cogvideox - High quality, multi-GPU"
+	@echo "  3) wan      - Versatile T2V/I2V"
+	@echo ""
+	@read -p "Model [1-3]: " model_choice; \
+	case "$$model_choice" in \
+		1) MODEL="ovi" ;; \
+		2) MODEL="cogvideox" ;; \
+		3) MODEL="wan" ;; \
+		*) MODEL="ovi" ;; \
+	esac; \
+	echo ""; \
+	echo "$(YELLOW)Select mode:$(NC)"; \
+	echo "  1) t2v - Text to Video"; \
+	echo "  2) i2v - Image to Video"; \
+	echo ""; \
+	read -p "Mode [1-2]: " mode_choice; \
+	case "$$mode_choice" in \
+		2) MODE="i2v" ;; \
+		*) MODE="t2v" ;; \
+	esac; \
+	echo ""; \
+	read -p "Prompt: " PROMPT; \
+	if [ "$$MODE" = "i2v" ]; then \
+		read -p "Image path: " IMAGE; \
+	fi; \
+	$(MAKE) run-generate MODEL=$$MODEL MODE=$$MODE PROMPT="$$PROMPT" IMAGE="$$IMAGE"
+
+run-generate: ## Run video generation (usage: make run-generate MODEL=ovi MODE=t2v PROMPT="...")
+	@cd terraform && \
+		IP=$$(terraform output -raw public_ip 2>/dev/null) && \
+		ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$$IP \
+			"generate-video $(MODEL) $(MODE) '$(PROMPT)' $(IMAGE)"
+
+deploy-scripts: ## Deploy video generation scripts to server
+	@echo "$(CYAN)📤 Deploying scripts to server...$(NC)"
+	@cd terraform && \
+		IP=$$(terraform output -raw public_ip 2>/dev/null) && \
+		scp -i ~/.ssh/id_rsa ../ansible/files/generate-video.sh ubuntu@$$IP:~/video-generation/ && \
+		ssh -i ~/.ssh/id_rsa ubuntu@$$IP "chmod +x ~/video-generation/generate-video.sh && sudo ln -sf ~/video-generation/generate-video.sh /usr/local/bin/generate-video"
+	@echo "$(GREEN)✅ Scripts deployed$(NC)"
 
 # Git helpers
 commit: ## Git commit with standardized message

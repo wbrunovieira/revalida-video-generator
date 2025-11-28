@@ -1,6 +1,9 @@
 ---
-# Setup Ovi (Wan2.2 + Audio) for multi-GPU text-to-video+audio generation
+# Setup Ovi (Video + Audio) with isolated venv
 # Run with: ansible-playbook playbook.yml --tags setup-ovi
+#
+# Creates: /mnt/models/Ovi-venv (isolated virtualenv)
+# Used by: generate-video.sh when model=ovi
 
 - name: Display Ovi setup banner
   debug:
@@ -11,15 +14,16 @@
       Features:
       - 11B parameters (5B video + 5B audio)
       - Text-to-Video + Audio generation
+      - Image-to-Video support
       - 720p/960p resolution
       - 5-10 seconds @ 24fps
-      - Multi-GPU support via sequence parallelism
       - FP8 quantization for 24GB VRAM
-      - Based on Wan2.2-TI2V-5B
+      - Isolated venv: {{ models_dir }}/Ovi-venv
       ==========================================
+  tags: [setup-ovi]
 
 # ============================================
-# CLONE OVI REPOSITORY FIRST (needed for download script)
+# STEP 1: CLONE OVI REPOSITORY
 # ============================================
 - name: Check if Ovi code repository exists
   stat:
@@ -39,57 +43,146 @@
 
 - name: Display Ovi repository status
   debug:
-    msg: "✅ Ovi code repository cloned to {{ models_dir }}/Ovi-code"
+    msg: "✅ Ovi code repository: {{ models_dir }}/Ovi-code"
   tags: [setup-ovi]
 
 # ============================================
-# INSTALL OVI DEPENDENCIES
+# STEP 2: CREATE ISOLATED OVI-VENV
 # ============================================
-- name: Install PyTorch 2.6.0 (Ovi requirement)
+- name: Check if Ovi-venv exists
+  stat:
+    path: "{{ models_dir }}/Ovi-venv/bin/activate"
+  register: ovi_venv_check
+  tags: [setup-ovi]
+
+- name: Remove old Ovi-venv if broken
+  file:
+    path: "{{ models_dir }}/Ovi-venv"
+    state: absent
+  when: not ovi_venv_check.stat.exists
+  tags: [setup-ovi]
+
+- name: Create Ovi-venv
+  command: python3 -m venv {{ models_dir }}/Ovi-venv
+  become_user: ubuntu
+  when: not ovi_venv_check.stat.exists
+  tags: [setup-ovi]
+
+- name: Display venv status
+  debug:
+    msg: "✅ Ovi-venv created: {{ models_dir }}/Ovi-venv"
+  tags: [setup-ovi]
+
+# ============================================
+# STEP 3: INSTALL DEPENDENCIES (PyTorch 2.6.0)
+# ============================================
+- name: Upgrade pip, wheel, setuptools in Ovi-venv
   pip:
     name:
-      - torch==2.6.0
-      - torchvision
-      - torchaudio
-    virtualenv: "{{ app_dir }}/venv"
+      - pip
+      - wheel
+      - setuptools
+      - ninja
+      - packaging
+    state: latest
+    virtualenv: "{{ models_dir }}/Ovi-venv"
+  become_user: ubuntu
+  tags: [setup-ovi]
+
+- name: Install PyTorch 2.6.0 with CUDA 12.4 (required for flash_attn)
+  shell: |
+    source {{ models_dir }}/Ovi-venv/bin/activate
+    pip install torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-ovi]
+
+- name: Display PyTorch install status
+  debug:
+    msg: "✅ PyTorch 2.6.0+cu124 installed"
+  tags: [setup-ovi]
+
+# ============================================
+# STEP 4: INSTALL FLASH ATTENTION (pre-built wheel)
+# ============================================
+- name: Install Flash Attention 2 (pre-built wheel for PyTorch 2.6 + CUDA 12)
+  shell: |
+    source {{ models_dir }}/Ovi-venv/bin/activate
+    pip uninstall flash-attn -y 2>/dev/null || true
+    pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-ovi]
+  ignore_errors: yes
+
+- name: Verify flash_attn installation
+  shell: |
+    source {{ models_dir }}/Ovi-venv/bin/activate
+    python -c "import flash_attn; print('flash_attn OK')"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  register: flash_attn_verify
+  ignore_errors: yes
+  tags: [setup-ovi]
+
+- name: Display flash_attn status
+  debug:
+    msg: "{{ 'flash_attn: Installed ✅' if flash_attn_verify.rc == 0 else 'flash_attn: Failed (model may still work) ⚠️' }}"
+  tags: [setup-ovi]
+
+# ============================================
+# STEP 5: INSTALL OVI DEPENDENCIES
+# ============================================
+- name: Install Ovi additional dependencies
+  pip:
+    name:
+      - einops
+      - omegaconf
+      - decord
+      - imageio
+      - imageio-ffmpeg
+      - soundfile
+      - librosa
+      - diffusers
+      - transformers
+      - accelerate
+      - huggingface-hub
+      - opencv-python
+      - Pillow
+      - numpy
+      - scipy
+    virtualenv: "{{ models_dir }}/Ovi-venv"
   become_user: ubuntu
   tags: [setup-ovi]
 
 - name: Install Ovi requirements from requirements.txt
   pip:
     requirements: "{{ models_dir }}/Ovi-code/requirements.txt"
-    virtualenv: "{{ app_dir }}/venv"
+    virtualenv: "{{ models_dir }}/Ovi-venv"
   become_user: ubuntu
   tags: [setup-ovi]
+  ignore_errors: yes
 
-- name: Check if flash-attn is available
-  shell: |
-    source {{ app_dir }}/venv/bin/activate
-    pip show flash-attn || echo "flash-attn not found"
-  register: flash_attn_check
-  become_user: ubuntu
-  tags: [setup-ovi]
-  args:
-    executable: /bin/bash
-
-- name: Display flash-attn status
+- name: Display dependencies status
   debug:
-    msg: |
-      Flash Attention: {{ 'Installed ✅' if 'Version' in flash_attn_check.stdout else 'Not installed (optional)' }}
+    msg: "✅ Ovi dependencies installed"
   tags: [setup-ovi]
 
 # ============================================
-# DOWNLOAD OVI WEIGHTS AND DEPENDENCIES
+# STEP 6: DOWNLOAD OVI MODEL WEIGHTS
 # ============================================
 - name: Check if Ovi 720x720_5s model is downloaded
   stat:
     path: "{{ models_dir }}/Ovi/720x720_5s"
-  register: ovi_complete_check
+  register: ovi_model_check
   tags: [setup-ovi]
 
-- name: Download all Ovi components (Ovi + Wan2.2 VAE + T5 + MMAudio VAE)
+- name: Download Ovi model and dependencies
   shell: |
-    source {{ app_dir }}/venv/bin/activate
+    source {{ models_dir }}/Ovi-venv/bin/activate
     cd {{ models_dir }}/Ovi-code
     echo "📥 Downloading Ovi and all dependencies..."
     echo "   - Ovi model weights"
@@ -100,14 +193,14 @@
     echo ""
     python3 download_weights.py --output-dir {{ models_dir }}/Ovi --models 720x720_5s
   become_user: ubuntu
-  when: not ovi_complete_check.stat.exists
-  tags: [setup-ovi]
+  when: not ovi_model_check.stat.exists
   args:
     executable: /bin/bash
-  async: 3600  # 1 hour timeout
-  poll: 30     # Check every 30 seconds
+  async: 3600
+  poll: 30
+  tags: [setup-ovi]
 
-- name: Verify Ovi 720x720_5s model downloaded
+- name: Verify Ovi model downloaded
   stat:
     path: "{{ models_dir }}/Ovi/720x720_5s"
   register: ovi_final_check
@@ -116,49 +209,43 @@
 - name: Display download status
   debug:
     msg: |
-      Ovi 720x720_5s model: {{ 'Downloaded ✅' if ovi_final_check.stat.exists else 'Failed ❌' }}
+      Ovi 720x720_5s model: {{ 'Downloaded ✅' if ovi_final_check.stat.exists else 'Not found ❌' }}
       Location: {{ models_dir }}/Ovi/
-      Compatible with: FP8 quantization for 24GB VRAM
   tags: [setup-ovi]
 
 # ============================================
-# CONFIGURE OVI FOR 24GB VRAM (A10G)
+# STEP 7: CREATE INFERENCE CONFIG
 # ============================================
-- name: Create Ovi configuration for 24GB VRAM
+- name: Create Ovi default inference config
   copy:
     dest: "{{ models_dir }}/Ovi-code/ovi/configs/inference/inference_24gb.yaml"
     content: |
       # Ovi Configuration for 24GB VRAM (A10G GPUs)
       # Optimized for G5.12xlarge (4x A10G)
 
-      # Output and Model Configuration
-      model_name: "720x720_5s"  # FP8 only supports 720x720_5s currently
+      model_name: "720x720_5s"
       output_dir: "/mnt/output"
-      ckpt_dir: "/mnt/models/Ovi"  # Use already downloaded weights
+      ckpt_dir: "/mnt/models/Ovi"
 
-      # Generation Quality Settings
       sample_steps: 50
       solver_name: "unipc"
       shift: 5.0
       seed: 42
 
-      # Guidance Strength Control
       audio_guidance_scale: 3.0
       video_guidance_scale: 4.0
       slg_layer: 11
 
-      # Multi-GPU and Performance (CRITICAL for 24GB)
-      sp_size: 1                    # Single GPU for now, multi-GPU later
-      cpu_offload: True             # REQUIRED for 24GB VRAM
-      fp8: True                     # REQUIRED for 24GB VRAM
+      # CRITICAL for 24GB VRAM
+      sp_size: 1
+      cpu_offload: True
+      fp8: True
 
-      # Input Configuration
-      text_prompt: "Italian doctor in white coat examining medical charts in modern hospital, professional HD quality. Audio: Professional medical office ambiance with soft background music"
       mode: "t2v"
+      text_prompt: "Italian doctor in white coat. Audio: Professional ambient music"
       video_frame_height_width: [720, 720]
       each_example_n_times: 1
 
-      # Quality Control
       video_negative_prompt: "jitter, bad hands, blur, distortion"
       audio_negative_prompt: "robotic, muffled, echo, distorted"
     owner: ubuntu
@@ -167,145 +254,63 @@
   tags: [setup-ovi]
 
 # ============================================
-# CREATE HELPER SCRIPTS
+# STEP 8: COPY GENERATE-VIDEO SCRIPT
 # ============================================
-- name: Create Ovi helper script for easy inference
+- name: Copy generate-video.sh to server
   copy:
-    dest: "{{ app_dir }}/ovi_generate.sh"
-    content: |
-      #!/bin/bash
-      # Ovi Video+Audio Generation Helper (FIXED)
-      # Usage: ./ovi_generate.sh "Your prompt here. Audio: Your audio description"
-
-      cd {{ models_dir }}/Ovi-code
-      source {{ app_dir }}/venv/bin/activate
-
-      PROMPT="${1:-Italian doctor in white coat examining medical charts. Audio: Professional medical office ambiance}"
-
-      echo "🎬 Generating video+audio with Ovi..."
-      echo "Prompt: $PROMPT"
-      echo ""
-
-      # Create temporary config with user's prompt
-      TEMP_CONFIG="/tmp/ovi_temp_config_$$.yaml"
-
-      cat > "$TEMP_CONFIG" << EOF
-      # Temporary Ovi Configuration
-      model_name: "720x720_5s"
-      output_dir: "/mnt/output"
-      ckpt_dir: "/mnt/models/Ovi"
-
-      # Generation Quality
-      sample_steps: 50
-      solver_name: "unipc"
-      shift: 5.0
-      seed: 42
-
-      # Guidance
-      audio_guidance_scale: 3.0
-      video_guidance_scale: 4.0
-      slg_layer: 11
-
-      # Performance for 24GB VRAM
-      sp_size: 1
-      cpu_offload: True
-      fp8: True
-
-      # User's prompt
-      text_prompt: "$PROMPT"
-      mode: "t2v"
-      video_frame_height_width: [720, 720]
-      each_example_n_times: 1
-
-      # Quality control
-      video_negative_prompt: "jitter, bad hands, blur, distortion, deformed"
-      audio_negative_prompt: "robotic, muffled, echo, distorted, unclear"
-      EOF
-
-      # Run inference with temporary config
-      python3 inference.py --config-file "$TEMP_CONFIG"
-
-      # Cleanup
-      rm -f "$TEMP_CONFIG"
-
-      echo ""
-      echo "✅ Generation complete! Check /mnt/output/"
-      ls -lh /mnt/output/*.mp4 | tail -5
+    src: "{{ playbook_dir }}/files/generate-video.sh"
+    dest: "{{ app_dir }}/generate-video.sh"
+    owner: ubuntu
+    group: ubuntu
     mode: '0755'
-    owner: ubuntu
-    group: ubuntu
   tags: [setup-ovi]
 
-- name: Create Ovi Gradio launcher
-  copy:
-    dest: "{{ app_dir }}/ovi_gradio.sh"
-    content: |
-      #!/bin/bash
-      # Ovi Gradio UI Launcher
-      # Optimized for 24GB VRAM
-
-      cd {{ models_dir }}/Ovi-code
-      source {{ app_dir }}/venv/bin/activate
-
-      echo "🎨 Starting Ovi Gradio UI..."
-      echo "Optimized for 24GB VRAM (FP8 + CPU offload)"
-      echo ""
-      echo "Access at: http://$(curl -s ifconfig.me):7860"
-      echo ""
-
-      python3 gradio_app.py --cpu_offload --fp8
-    mode: '0755'
-    owner: ubuntu
-    group: ubuntu
+- name: Create symlink for generate-video
+  file:
+    src: "{{ app_dir }}/generate-video.sh"
+    dest: /usr/local/bin/generate-video
+    state: link
   tags: [setup-ovi]
-
-# ============================================
-# DOWNLOAD FP8 WEIGHTS
-# ============================================
-- name: Check if FP8 weights exist
-  stat:
-    path: "{{ models_dir }}/Ovi/model_fp8_e4m3fn.safetensors"
-  register: fp8_weights_check
-  tags: [setup-ovi]
-
-- name: Download FP8 quantized weights for 24GB VRAM
-  get_url:
-    url: "https://huggingface.co/rkfg/Ovi-fp8_quantized/resolve/main/model_fp8_e4m3fn.safetensors"
-    dest: "{{ models_dir }}/Ovi/model_fp8_e4m3fn.safetensors"
-    owner: ubuntu
-    group: ubuntu
-  when: not fp8_weights_check.stat.exists
-  tags: [setup-ovi]
-  async: 1800  # 30 minutes
-  poll: 30
 
 # ============================================
 # FINAL STATUS
 # ============================================
-- name: Display Ovi setup complete
+- name: Verify complete installation
+  shell: |
+    source {{ models_dir }}/Ovi-venv/bin/activate
+    echo "PyTorch: $(python -c 'import torch; print(torch.__version__)')"
+    echo "CUDA: $(python -c 'import torch; print(torch.cuda.is_available())')"
+    python -c "import flash_attn" && echo "flash_attn: OK" || echo "flash_attn: Not available"
+    python -c "import einops" && echo "einops: OK" || echo "einops: Not available"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  register: install_verify
+  tags: [setup-ovi]
+  ignore_errors: yes
+
+- name: Display setup complete
   debug:
     msg: |
       ==========================================
       ✅ OVI SETUP COMPLETE
       ==========================================
-      Repository: {{ models_dir }}/Ovi-code/
-      Weights: {{ models_dir }}/Ovi/
-      Config: {{ models_dir }}/Ovi-code/ovi/configs/inference/inference_24gb.yaml
 
-      🎬 Quick Start:
+      📁 Locations:
+         Venv:    {{ models_dir }}/Ovi-venv
+         Code:    {{ models_dir }}/Ovi-code
+         Weights: {{ models_dir }}/Ovi
+         Config:  {{ models_dir }}/Ovi-code/ovi/configs/inference/inference_24gb.yaml
 
-      1. Simple generation:
-         {{ app_dir }}/ovi_generate.sh "Your prompt. Audio: audio description"
+      🔍 Installation Check:
+      {{ install_verify.stdout }}
 
-      2. Gradio UI:
-         {{ app_dir }}/ovi_gradio.sh
+      🎬 Usage:
+         generate-video ovi t2v "Your prompt. Audio: description"
+         generate-video ovi i2v "Your prompt" /path/to/image.png
 
-      3. Manual inference:
-         cd {{ models_dir }}/Ovi-code
-         source {{ app_dir }}/venv/bin/activate
-         python3 inference.py --config-file ovi/configs/inference/inference_24gb.yaml
+      📝 Or interactive mode:
+         generate-video
 
-      📝 Memory: FP8 + CPU offload = ~24GB VRAM (perfect for A10G)
-      ⏱️  Time: ~2-3 minutes per 5-second video
       ==========================================
   tags: [setup-ovi]

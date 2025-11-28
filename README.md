@@ -23,11 +23,13 @@ make stop
 This project provides **complete automation** for deploying and managing a GPU server for AI video generation:
 
 1. **Terraform** manages AWS infrastructure:
+
    - GPU instance (G5.12xlarge with 4x NVIDIA A10G)
    - EBS volumes for models and output
    - Security groups, IAM roles, Elastic IP
 
 2. **Ansible** configures the server:
+
    - Mounts EBS volumes
    - Installs Python, PyTorch, Diffusers
    - Downloads AI models
@@ -40,16 +42,17 @@ This project provides **complete automation** for deploying and managing a GPU s
 
 ## 💰 Cost Optimization
 
-| Instance | Spot | On-Demand | Best For |
-|----------|------|-----------|----------|
-| g5.12xlarge | ~$1.70/h | ~$5.67/h | Ovi, CogVideoX |
-| p3dn.24xlarge | ~$10/h | ~$31/h | Large models (32GB+ VRAM) |
+| Instance      | Spot     | On-Demand | Best For                  |
+| ------------- | -------- | --------- | ------------------------- |
+| g5.12xlarge   | ~$1.70/h | ~$5.67/h  | Ovi, CogVideoX , Wan      |
+| p3dn.24xlarge | ~$10/h   | ~$31/h    | Large models (32GB+ VRAM) |
 
 - **Stopped:** $0/hour (both instances)
 - **Storage:** ~$56/month (EBS volumes persist between switches)
 - **vs Sora:** 93-98% cheaper per video
 
 **💡 Tips:**
+
 - Use `make stop` when not generating videos
 - Use g5 (default) for most work, p3dn for large models
 - EBS volumes shared between instances - no re-download needed
@@ -95,6 +98,7 @@ make deploy
 ```
 
 This will:
+
 1. Create AWS infrastructure
 2. Start the server
 3. Mount EBS volumes
@@ -106,6 +110,7 @@ Takes ~15-20 minutes on first run.
 ## 📚 Available Commands
 
 ### Deployment & Management
+
 - `make deploy` - Complete deployment (Terraform + Ansible)
 - `make start` - Start server (interactive instance selection)
 - `make start-g5` - Start with g5.12xlarge (4x A10G, 24GB each) - ~$1.70/h
@@ -115,12 +120,13 @@ Takes ~15-20 minutes on first run.
 - `make ssh` - SSH into server
 
 ### Hybrid Instance Setup
+
 Switch between instance types based on your needs:
 
-| Instance | GPUs | VRAM/GPU | Cost (Spot) | Best For |
-|----------|------|----------|-------------|----------|
-| g5.12xlarge | 4x A10G | 24GB | ~$1.70/h | Ovi, CogVideoX |
-| p3dn.24xlarge | 8x V100 | 32GB | ~$10/h | Large models (32GB+ VRAM) |
+| Instance      | GPUs    | VRAM/GPU | Cost (Spot) | Best For                  |
+| ------------- | ------- | -------- | ----------- | ------------------------- |
+| g5.12xlarge   | 4x A10G | 24GB     | ~$1.70/h    | Ovi, CogVideoX            |
+| p3dn.24xlarge | 8x V100 | 32GB     | ~$10/h      | Large models (32GB+ VRAM) |
 
 ```bash
 # Interactive selection
@@ -134,23 +140,27 @@ make start-p3dn    # For large models (32GB+ VRAM)
 **Note:** EBS volumes (models + outputs) persist between instance switches.
 
 ### Infrastructure
+
 - `make terraform-plan` - Preview infrastructure changes
 - `make terraform-apply` - Apply Terraform changes
 - `make ansible-only` - Run Ansible config only
 - `make destroy` - Destroy all infrastructure ⚠️
 
 ### Server Operations
+
 - `make video-status` - Show detailed server status
 - `make download-models` - Download all 3 main models (~75GB, 30-60 min)
 - `make download-model MODEL=<name>` - Download specific AI model
 - `make logs` - View deployment logs
 
 ### Video Sync
+
 - `make sync-videos` - Sync videos from server to ~/Videos/revalida/
 - `make setup-auto-sync` - Enable automatic sync (every 5 min)
 - `make remove-auto-sync` - Disable automatic sync
 
 ### Development
+
 - `make validate` - Validate Terraform config
 - `make fmt` - Format Terraform files
 - `make clean` - Clean temp files
@@ -158,6 +168,7 @@ make start-p3dn    # For large models (32GB+ VRAM)
 ## 🎮 Using the Server
 
 ### Connect
+
 ```bash
 make ssh
 # or
@@ -165,6 +176,7 @@ ssh -i ~/.ssh/id_rsa ubuntu@<IP>
 ```
 
 ### Available Commands on Server
+
 ```bash
 video-status          # System overview
 venv                  # Activate Python
@@ -177,16 +189,19 @@ cdoutput              # Go to /mnt/output
 ### Download AI Models
 
 **Option 1: Download all 3 main models automatically**
+
 ```bash
 # From your local machine (recommended)
 make download-models
 ```
 
 This downloads:
+
 - **Wan 2.2** (~20GB) - Most versatile (T2V + I2V)
 - **Ovi** (~70GB) - Video + synchronized audio generation
 
 **Option 2: Download specific model**
+
 ```bash
 # From your local machine
 make download-model MODEL=THUDM/CogVideoX-5b
@@ -200,10 +215,12 @@ download-model feizhengcong/Ovi
 ### Generate Videos
 
 **Quick start guides for each model:**
+
 - 📖 **[Wan 2.2](docs/WAN22.md)** - Text-to-Video & Image-to-Video
 - 📖 **[Ovi](#ovi-video--audio)** - Video with synchronized audio
 
 **Example workflow:**
+
 ```bash
 # SSH into server
 make ssh
@@ -222,9 +239,11 @@ python test_cogvideox.py
 
 ### Ovi (Video + Audio)
 
-Ovi generates **video with synchronized audio** in a single pass - perfect for videos with speech, music, or sound effects. Supports both **Text-to-Video (T2V)** and **Image-to-Video (I2V)** modes.
+Ovi generates **video with synchronized audio** in a single pass - perfect for videos with speech, music, or sound
+effects. Supports both **Text-to-Video (T2V)** and **Image-to-Video (I2V)** modes.
 
 **Setup Ovi:**
+
 ```bash
 # From local machine
 make setup-ovi
@@ -233,12 +252,9 @@ make setup-ovi
 make fix-ovi
 ```
 
-**Available scripts:**
-| Script | Mode | Resolution | Duration |
-|--------|------|------------|----------|
-| `ovi_generate.sh` | T2V | 720×720 | 5 seconds |
-| `ovi_i2v.sh` | I2V | 720×720 | 5 seconds |
-| `ovi_i2v_10s.sh` | I2V | 960×960 | 10 seconds |
+**Available scripts:** | Script | Mode | Resolution | Duration | |--------|------|------------|----------| |
+`ovi_generate.sh` | T2V | 720×720 | 5 seconds | | `ovi_i2v.sh` | I2V | 720×720 | 5 seconds | | `ovi_i2v_10s.sh` | I2V |
+960×960 | 10 seconds |
 
 #### Text-to-Video (T2V) - Generate from prompt only
 
@@ -290,6 +306,7 @@ Use `<S>...<E>` tags to make characters speak:
 Based on extensive testing, these tips will help you get the best results:
 
 **1. Use natural, descriptive prompts (NOT technical)**
+
 ```bash
 # GOOD - Natural description
 "A friendly Italian doctor in white coat warmly greeting the camera and speaking.
@@ -300,6 +317,7 @@ He is animated and expressive, gesturing naturally as he talks. Professional med
 ```
 
 **2. Keep speech short for 5-second videos**
+
 ```bash
 # GOOD - Short phrase fits well in 5 seconds
 "Audio: <S>Ciao! Benvenuto al corso Revalida Italia.<E> Gentle piano music"
@@ -353,14 +371,15 @@ python3 inference.py --config-file /tmp/custom_i2v.yaml
 
 **4. Key parameters to experiment with:**
 
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `seed` | 42 | Different seeds = different results |
-| `video_guidance_scale` | 4.0 | Higher (5.0-6.0) = more prompt adherence |
-| `sample_steps` | 50 | More steps = better quality (slower) |
-| `video_negative_prompt` | - | Avoid unwanted artifacts |
+| Parameter               | Default | Effect                                   |
+| ----------------------- | ------- | ---------------------------------------- |
+| `seed`                  | 42      | Different seeds = different results      |
+| `video_guidance_scale`  | 4.0     | Higher (5.0-6.0) = more prompt adherence |
+| `sample_steps`          | 50      | More steps = better quality (slower)     |
+| `video_negative_prompt` | -       | Avoid unwanted artifacts                 |
 
 **5. Important limitations:**
+
 - **FP8 only works with 720x720_5s** - The 10-second 960x960 model requires full precision (more VRAM)
 - **5 seconds is the limit** with FP8 quantization on 24GB VRAM
 - **Lip sync is approximate** - Ovi generates audio and video together but sync isn't perfect
@@ -390,11 +409,13 @@ The **same doctor** will appear in all videos, maintaining consistency!
 ### Copy Videos to Local
 
 **Option 1: Manual sync (on-demand)**
+
 ```bash
 make sync-videos
 ```
 
 **Option 2: Automatic sync (every 5 minutes)**
+
 ```bash
 # Enable auto-sync
 make setup-auto-sync
@@ -409,6 +430,7 @@ tail -f /tmp/revalida-sync.log
 **Videos location:** `~/Videos/revalida/`
 
 **How it works:**
+
 - Uses `rsync` with `--ignore-existing` (doesn't re-download)
 - Preserves file timestamps and permissions
 - Shows progress during transfer
@@ -443,20 +465,24 @@ revalida-video-generator/
 Recommended models for this project:
 
 **Best for Video + Audio + Character Consistency:**
+
 - Ovi (720×720 or 960×960, 5-10s)
 - Generates synchronized audio with video in single pass
 - **I2V mode:** Use your character image for consistent talking head videos
 - Perfect for speech, narration, music, sound effects
 
 **Most Versatile:**
+
 - Wan 2.2 (supports both text-to-video and image-to-video)
 
 **Best Quality/Performance Balance:**
+
 - CogVideoX-5B (720p, multi-GPU support with xDiT)
 
 ## 💡 Tips
 
 ### Daily Workflow
+
 ```bash
 # Morning
 make start
@@ -469,6 +495,7 @@ make stop    # Save money!
 ```
 
 ### Monitor Costs
+
 ```bash
 # Check instance state
 make status
@@ -479,6 +506,7 @@ make status
 ```
 
 ### Troubleshooting
+
 ```bash
 # Can't SSH?
 make status  # Check if running
@@ -515,6 +543,4 @@ MIT
 
 ---
 
-**Created with:** Terraform + Ansible + Make
-**GPU:** NVIDIA A10G (4x on G5.12xlarge)
-**Models:** CogVideoX, Ovi
+**Created with:** Terraform + Ansible + Make **GPU:** NVIDIA A10G (4x on G5.12xlarge) **Models:** CogVideoX, Ovi
