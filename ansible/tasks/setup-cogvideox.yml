@@ -4,8 +4,8 @@
 #
 # Creates: /mnt/models/CogVideoX-venv (isolated virtualenv)
 # Models:
-#   - THUDM/CogVideoX-5b (~10GB) - Text-to-Video
-#   - THUDM/CogVideoX1.5-5B-I2V (~15GB) - Image-to-Video
+#   - THUDM/CogVideoX-5b (~10GB) - Text-to-Video -> /mnt/models/
+#   - THUDM/CogVideoX1.5-5B-I2V (~15GB) - Image-to-Video -> /mnt/models2/ (symlinked)
 # Features: Multi-GPU via device_map, INT8 quantization option
 
 - name: Display CogVideoX setup banner
@@ -144,26 +144,42 @@
 
 # ============================================
 # STEP 5: DOWNLOAD COGVIDEOX1.5-5B-I2V MODEL
+# Downloads to /mnt/models2 (more space) and creates symlink
 # ============================================
-- name: Check if CogVideoX1.5-5B-I2V model exists
+- name: Check if CogVideoX1.5-5B-I2V model exists (symlink or direct)
   stat:
     path: "{{ models_dir }}/CogVideoX1.5-5B-I2V/model_index.json"
   register: cogvideox_i2v_check
   tags: [setup-cogvideox]
 
-- name: Download CogVideoX1.5-5B-I2V model (~15GB)
+- name: Check if I2V model exists in models2
+  stat:
+    path: /mnt/models2/CogVideoX1.5-5B-I2V/model_index.json
+  register: cogvideox_i2v_models2_check
+  tags: [setup-cogvideox]
+
+- name: Download CogVideoX1.5-5B-I2V to /mnt/models2 (~15GB)
   shell: |
     source {{ models_dir }}/CogVideoX-venv/bin/activate
-    cd {{ models_dir }}
-    echo "📥 Downloading CogVideoX1.5-5B-I2V (~15GB, will take 15-30 minutes)..."
+    cd /mnt/models2
+    echo "📥 Downloading CogVideoX1.5-5B-I2V to /mnt/models2 (~15GB, will take 15-30 minutes)..."
     huggingface-cli download THUDM/CogVideoX1.5-5B-I2V --local-dir CogVideoX1.5-5B-I2V
   become_user: ubuntu
-  when: not cogvideox_i2v_check.stat.exists
+  when: not cogvideox_i2v_check.stat.exists and not cogvideox_i2v_models2_check.stat.exists
   tags: [setup-cogvideox]
   args:
     executable: /bin/bash
   async: 3600
   poll: 30
+
+- name: Create symlink from models to models2 for I2V
+  file:
+    src: /mnt/models2/CogVideoX1.5-5B-I2V
+    dest: "{{ models_dir }}/CogVideoX1.5-5B-I2V"
+    state: link
+    force: yes
+  when: not cogvideox_i2v_check.stat.exists
+  tags: [setup-cogvideox]
 
 - name: Verify I2V model downloaded successfully
   stat:
@@ -175,7 +191,7 @@
   debug:
     msg: |
       CogVideoX1.5-5B-I2V: {{ 'Downloaded ✅' if cogvideox_i2v_final.stat.exists else 'Failed ❌' }}
-      Location: {{ models_dir }}/CogVideoX1.5-5B-I2V/
+      Location: /mnt/models2/CogVideoX1.5-5B-I2V/ (symlinked to {{ models_dir }})
   tags: [setup-cogvideox]
 
 # ============================================
@@ -484,7 +500,7 @@
       📁 Locations:
          Venv:      {{ models_dir }}/CogVideoX-venv
          T2V Model: {{ models_dir }}/CogVideoX-5b
-         I2V Model: {{ models_dir }}/CogVideoX1.5-5B-I2V
+         I2V Model: /mnt/models2/CogVideoX1.5-5B-I2V (symlinked to {{ models_dir }})
          Script:    {{ models_dir }}/CogVideoX-generate.py
 
       🔍 Installation Check:
