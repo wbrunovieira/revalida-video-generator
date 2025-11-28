@@ -86,8 +86,7 @@ show_banner() {
     echo "║  Modelos disponíveis:                                         ║"
     echo "║    • ovi       - Video + Audio sincronizado (T2V/I2V)        ║"
     echo "║    • cogvideox - Alta qualidade, multi-GPU (T2V/I2V)         ║"
-    echo "║    • wan       - Versátil, T2V + I2V                         ║"
-    echo "║    • wan14b    - Ultra-rápido 4 steps! (T2V/I2V) [NOVO]      ║"
+    echo "║    • wan14b    - Ultra-rápido 4 steps! (I2V) [NOVO]          ║"
     echo "╠═══════════════════════════════════════════════════════════════╣"
     echo "║  GPUs detectadas: ${NUM_GPUS}                                           ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
@@ -129,31 +128,38 @@ interactive_mode() {
     echo -e "${YELLOW}1. Escolha o modelo:${NC}"
     echo "   1) ovi       - Video + Audio sincronizado"
     echo "   2) cogvideox - Alta qualidade"
-    echo "   3) wan       - Versátil"
-    echo "   4) wan14b    - Ultra-rápido (4 steps!) [NOVO]"
+    echo "   3) wan14b    - Ultra-rápido (4 steps, I2V apenas) [NOVO]"
     echo ""
-    read -p "   Modelo [1-4, default=1]: " model_choice
+    read -p "   Modelo [1-3, default=1]: " model_choice
     case "$model_choice" in
         2) MODEL="cogvideox" ;;
-        3) MODEL="wan" ;;
-        4) MODEL="wan14b" ;;
+        3) MODEL="wan14b" ;;
         *) MODEL="ovi" ;;
     esac
     echo -e "   ${GREEN}✓ Modelo: ${MODEL}${NC}"
     echo ""
 
     # 2. Escolher modo (T2V ou I2V)
-    echo -e "${YELLOW}2. Escolha o modo:${NC}"
-    echo "   1) t2v - Text to Video (gerar do zero)"
-    echo "   2) i2v - Image to Video (animar imagem)"
-    echo ""
-    read -p "   Modo [1-2, default=1]: " mode_choice
-    case "$mode_choice" in
-        2) MODE="i2v" ;;
-        *) MODE="t2v" ;;
-    esac
-    echo -e "   ${GREEN}✓ Modo: ${MODE}${NC}"
-    echo ""
+    # wan14b só suporta I2V por enquanto (T2V precisa de custom nodes não instalados)
+    if [ "$MODEL" == "wan14b" ]; then
+        MODE="i2v"
+        echo -e "${YELLOW}2. Modo de geração:${NC}"
+        echo -e "   ${CYAN}WAN14B atualmente suporta apenas I2V (Image to Video)${NC}"
+        echo -e "   ${GREEN}✓ Modo: i2v (automático)${NC}"
+        echo ""
+    else
+        echo -e "${YELLOW}2. Escolha o modo:${NC}"
+        echo "   1) t2v - Text to Video (gerar do zero)"
+        echo "   2) i2v - Image to Video (animar imagem)"
+        echo ""
+        read -p "   Modo [1-2, default=1]: " mode_choice
+        case "$mode_choice" in
+            2) MODE="i2v" ;;
+            *) MODE="t2v" ;;
+        esac
+        echo -e "   ${GREEN}✓ Modo: ${MODE}${NC}"
+        echo ""
+    fi
 
     # 3. Se I2V, pedir imagem
     IMAGE=""
