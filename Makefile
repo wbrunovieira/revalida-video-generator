@@ -235,11 +235,13 @@ download-model: ## Download a specific model (usage: make download-model MODEL=t
 
 sync-videos: ## Sync videos from server to local machine
 	@echo "$(CYAN)📥 Syncing videos from server...$(NC)"
-	@mkdir -p ~/Videos/revalida
+	@mkdir -p ~/Videos/revalida ~/Videos/revalida/comfyui
 	@cd terraform && \
 		IP=$$(terraform output -raw public_ip 2>/dev/null) && \
 		rsync -avz --progress --ignore-existing -e "ssh -i ~/.ssh/id_rsa" \
 			ubuntu@$$IP:/mnt/output/ ~/Videos/revalida/ && \
+		rsync -avz --progress --ignore-existing -e "ssh -i ~/.ssh/id_rsa" \
+			ubuntu@$$IP:/mnt/models/ComfyUI/output/ ~/Videos/revalida/comfyui/ 2>/dev/null || true && \
 		echo "$(GREEN)✅ Videos synced to ~/Videos/revalida/$(NC)"
 
 setup-auto-sync: ## Setup automatic video sync (runs every 5 minutes)

@@ -178,21 +178,20 @@
 # ============================================
 # STEP 6: DOWNLOAD WAN 14B RAPID MODEL
 # ============================================
-- name: Check if Wan14B model exists
+- name: Check if Wan14B I2V model exists
   stat:
-    path: "{{ models_dir }}/ComfyUI/models/checkpoints/WAN2.2-14B-Rapid-MEGA-v12-I2V-FP8.safetensors"
+    path: "{{ models_dir }}/ComfyUI/models/checkpoints/wan2.2-i2v-rapid-aio.safetensors"
   register: wan14b_model_check
   tags: [setup-wan14b]
 
-- name: Download Wan14B Rapid MEGA v12 I2V model
+- name: Download Wan14B Rapid I2V model
   shell: |
     source {{ models_dir }}/Wan14B-venv/bin/activate
     cd {{ models_dir }}/ComfyUI/models/checkpoints
-    echo "📥 Downloading WAN 2.2 14B Rapid MEGA v12 I2V (~14GB)..."
-    huggingface-cli download Phr00t/WAN2.2-14B-Rapid-AllInOne \
-      WAN2.2-14B-Rapid-MEGA-v12-I2V-FP8.safetensors \
-      --local-dir . \
-      --local-dir-use-symlinks False
+    echo "📥 Downloading WAN 2.2 14B Rapid I2V AllInOne (~23GB)..."
+    hf download Phr00t/WAN2.2-14B-Rapid-AllInOne \
+      wan2.2-i2v-rapid-aio.safetensors \
+      --local-dir .
   become_user: ubuntu
   when: not wan14b_model_check.stat.exists
   args:
@@ -203,19 +202,18 @@
 
 - name: Check if Wan14B T2V model exists
   stat:
-    path: "{{ models_dir }}/ComfyUI/models/checkpoints/WAN2.2-14B-Rapid-MEGA-v12-T2V-FP8.safetensors"
+    path: "{{ models_dir }}/ComfyUI/models/checkpoints/wan2.2-t2v-rapid-aio.safetensors"
   register: wan14b_t2v_check
   tags: [setup-wan14b]
 
-- name: Download Wan14B Rapid MEGA v12 T2V model
+- name: Download Wan14B Rapid T2V model
   shell: |
     source {{ models_dir }}/Wan14B-venv/bin/activate
     cd {{ models_dir }}/ComfyUI/models/checkpoints
-    echo "📥 Downloading WAN 2.2 14B Rapid MEGA v12 T2V (~14GB)..."
-    huggingface-cli download Phr00t/WAN2.2-14B-Rapid-AllInOne \
-      WAN2.2-14B-Rapid-MEGA-v12-T2V-FP8.safetensors \
-      --local-dir . \
-      --local-dir-use-symlinks False
+    echo "📥 Downloading WAN 2.2 14B Rapid T2V AllInOne (~21GB)..."
+    hf download Phr00t/WAN2.2-14B-Rapid-AllInOne \
+      wan2.2-t2v-rapid-aio.safetensors \
+      --local-dir .
   become_user: ubuntu
   when: not wan14b_t2v_check.stat.exists
   args:
@@ -316,7 +314,7 @@
               "3": {
                   "class_type": "CheckpointLoaderSimple",
                   "inputs": {
-                      "ckpt_name": "WAN2.2-14B-Rapid-MEGA-v12-T2V-FP8.safetensors"
+                      "ckpt_name": "wan2.2-t2v-rapid-aio.safetensors"
                   }
               },
               "6": {
@@ -347,7 +345,7 @@
                       "seed": int(time.time()) % 1000000,
                       "steps": 4,
                       "cfg": 1.0,
-                      "sampler_name": "euler_a",
+                      "sampler_name": "euler_ancestral",
                       "scheduler": "beta",
                       "denoise": 1.0,
                       "model": ["3", 0],
@@ -395,7 +393,7 @@
               return None
 
       def generate_video_i2v(prompt: str, image_path: str, output_name: str = None):
-          """Generate I2V video using ComfyUI API"""
+          """Generate I2V video using ComfyUI API with WanImageToVideo"""
 
           if not start_comfyui_server():
               return None
@@ -403,13 +401,13 @@
           print(f"🖼️ Using image: {image_path}")
           print(f"📝 Prompt: {prompt}")
 
-          # For I2V, we need a more complex workflow with image input
-          # This is a simplified version - full workflow in mega-v3 folder
+          # Video workflow using WanImageToVideo node
+          # CheckpointLoader → CLIPTextEncode → LoadImage → WanImageToVideo → KSampler → VAEDecode → VHS_VideoCombine
           workflow = {
               "3": {
                   "class_type": "CheckpointLoaderSimple",
                   "inputs": {
-                      "ckpt_name": "WAN2.2-14B-Rapid-MEGA-v12-I2V-FP8.safetensors"
+                      "ckpt_name": "wan2.2-i2v-rapid-aio.safetensors"
                   }
               },
               "load_image": {
@@ -432,19 +430,32 @@
                       "clip": ["3", 1]
                   }
               },
+              "wan_i2v": {
+                  "class_type": "WanImageToVideo",
+                  "inputs": {
+                      "positive": ["6", 0],
+                      "negative": ["7", 0],
+                      "vae": ["3", 2],
+                      "width": 832,
+                      "height": 480,
+                      "length": 81,
+                      "batch_size": 1,
+                      "start_image": ["load_image", 0]
+                  }
+              },
               "13": {
                   "class_type": "KSampler",
                   "inputs": {
                       "seed": int(time.time()) % 1000000,
                       "steps": 4,
                       "cfg": 1.0,
-                      "sampler_name": "euler_a",
+                      "sampler_name": "euler_ancestral",
                       "scheduler": "beta",
                       "denoise": 1.0,
                       "model": ["3", 0],
-                      "positive": ["6", 0],
-                      "negative": ["7", 0],
-                      "latent_image": ["load_image", 0]
+                      "positive": ["wan_i2v", 0],
+                      "negative": ["wan_i2v", 1],
+                      "latent_image": ["wan_i2v", 2]
                   }
               },
               "8": {
@@ -454,11 +465,16 @@
                       "vae": ["3", 2]
                   }
               },
-              "9": {
-                  "class_type": "SaveImage",
+              "video_combine": {
+                  "class_type": "VHS_VideoCombine",
                   "inputs": {
+                      "images": ["8", 0],
+                      "frame_rate": 24,
+                      "loop_count": 0,
                       "filename_prefix": output_name or "wan14b_i2v",
-                      "images": ["8", 0]
+                      "format": "video/h264-mp4",
+                      "pingpong": False,
+                      "save_output": True
                   }
               }
           }
