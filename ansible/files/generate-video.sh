@@ -228,12 +228,14 @@ interactive_mode() {
         echo -e "   ${GREEN}✓ CFG: 1.0, Sampler: euler_a/beta${NC}"
         echo -e "   ${CYAN}Funciona em GPUs com 8GB+ VRAM${NC}"
         echo ""
-    else
-        # Outros modelos (cogvideox, wan)
+    elif [ "$MODEL" == "cogvideox" ]; then
+        # CogVideoX - perguntar sobre multi-GPU (único que usa device_map)
+        MODEL_VARIANT="5b"
+        USE_MULTI_GPU="false"
         if [ "$NUM_GPUS" -gt 1 ]; then
             echo -e "${YELLOW}4. Usar Multi-GPU? (${NUM_GPUS} GPUs disponíveis)${NC}"
-            echo "   1) Não - Single GPU"
-            echo "   2) Sim - Multi-GPU (mais rápido)"
+            echo "   1) Não - Single GPU com CPU offload (~5GB VRAM)"
+            echo "   2) Sim - Multi-GPU via device_map (~15GB/GPU, mais rápido)"
             echo ""
             read -p "   Multi-GPU [1-2, default=1]: " gpu_choice
             case "$gpu_choice" in
@@ -242,7 +244,18 @@ interactive_mode() {
             esac
             echo -e "   ${GREEN}✓ Multi-GPU: ${USE_MULTI_GPU}${NC}"
             echo ""
+        else
+            echo -e "${YELLOW}4. Configuração CogVideoX:${NC}"
+            echo -e "   ${GREEN}✓ Single GPU com CPU offload (~5GB VRAM)${NC}"
+            echo ""
         fi
+    else
+        # Wan 2.2 - single GPU padrão
+        MODEL_VARIANT="2.2"
+        USE_MULTI_GPU="false"
+        echo -e "${YELLOW}4. Configuração Wan 2.2:${NC}"
+        echo -e "   ${GREEN}✓ Single GPU com CPU offload${NC}"
+        echo ""
     fi
 
     echo -e "${MAGENTA}═══════════════════════════════════════════════════════════════${NC}"
