@@ -217,6 +217,12 @@ test-ovi: ## Create Ovi test scripts on server
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags test-ovi
 
+setup-wan14b: ## Setup WAN 14B Rapid (ultra-fast 4 steps, ComfyUI)
+	@echo "$(CYAN)🎬 Setting up WAN 14B Rapid AllInOne...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags setup-wan14b
+
 download-model: ## Download a specific model (usage: make download-model MODEL=tencent/HunyuanVideo)
 	@if [ -z "$(MODEL)" ]; then \
 		echo "$(RED)Error: MODEL not specified$(NC)"; \

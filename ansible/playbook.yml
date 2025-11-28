@@ -392,6 +392,11 @@
       import_tasks: tasks/test-ovi.yml
       tags: [test-ovi, never]  # never = only runs when explicitly requested
 
+    # Run with: ansible-playbook playbook.yml --tags setup-wan14b
+    - name: Include Wan14B Rapid setup tasks
+      import_tasks: tasks/setup-wan14b.yml
+      tags: [setup-wan14b, never]  # never = only runs when explicitly requested
+
 
     # ============================================
     # STEP 8: FINAL CHECKS & DISPLAY

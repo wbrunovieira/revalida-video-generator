@@ -34,18 +34,21 @@ declare -A MODEL_VENV=(
     ["ovi"]="Ovi-venv"
     ["cogvideox"]="CogVideoX-venv"
     ["wan"]="Wan-venv"
+    ["wan14b"]="Wan14B-venv"
 )
 
 declare -A MODEL_TORCH=(
     ["ovi"]="torch==2.6.0 torchvision torchaudio"
     ["cogvideox"]="torch torchvision torchaudio"
     ["wan"]="torch torchvision torchaudio"
+    ["wan14b"]="torch torchvision torchaudio"
 )
 
 declare -A MODEL_CODE_DIR=(
     ["ovi"]="Ovi-code"
     ["cogvideox"]="CogVideoX-5b"
     ["wan"]="Wan2.2"
+    ["wan14b"]="ComfyUI"
 )
 
 # Ovi model variants
@@ -84,6 +87,7 @@ show_banner() {
     echo "║    • ovi       - Video + Audio sincronizado (T2V/I2V)        ║"
     echo "║    • cogvideox - Alta qualidade, multi-GPU (T2V)             ║"
     echo "║    • wan       - Versátil, T2V + I2V                         ║"
+    echo "║    • wan14b    - Ultra-rápido 4 steps! (T2V/I2V) [NOVO]      ║"
     echo "╠═══════════════════════════════════════════════════════════════╣"
     echo "║  GPUs detectadas: ${NUM_GPUS}                                           ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
@@ -126,11 +130,13 @@ interactive_mode() {
     echo "   1) ovi       - Video + Audio sincronizado"
     echo "   2) cogvideox - Alta qualidade"
     echo "   3) wan       - Versátil"
+    echo "   4) wan14b    - Ultra-rápido (4 steps!) [NOVO]"
     echo ""
-    read -p "   Modelo [1-3, default=1]: " model_choice
+    read -p "   Modelo [1-4, default=1]: " model_choice
     case "$model_choice" in
         2) MODEL="cogvideox" ;;
         3) MODEL="wan" ;;
+        4) MODEL="wan14b" ;;
         *) MODEL="ovi" ;;
     esac
     echo -e "   ${GREEN}✓ Modelo: ${MODEL}${NC}"
@@ -212,6 +218,16 @@ interactive_mode() {
             echo -e "   ${GREEN}✓ Single-GPU com FP8 + CPU Offload${NC}"
             echo ""
         fi
+    elif [ "$MODEL" == "wan14b" ]; then
+        # Wan14B é ultra-rápido - não precisa de configurações extras
+        MODEL_VARIANT="mega-v12"
+        USE_MULTI_GPU="false"
+        echo -e "${YELLOW}4. Configuração WAN 14B Rapid:${NC}"
+        echo -e "   ${GREEN}✓ Modo: Ultra-rápido (4 steps)${NC}"
+        echo -e "   ${GREEN}✓ Precisão: FP8${NC}"
+        echo -e "   ${GREEN}✓ CFG: 1.0, Sampler: euler_a/beta${NC}"
+        echo -e "   ${CYAN}Funciona em GPUs com 8GB+ VRAM${NC}"
+        echo ""
     else
         # Outros modelos (cogvideox, wan)
         if [ "$NUM_GPUS" -gt 1 ]; then
@@ -619,6 +635,37 @@ EOF
 }
 
 # =============================================================================
+# Geração de vídeo - Wan 14B Rapid
+# =============================================================================
+
+generate_wan14b() {
+    local mode=$1
+    local prompt=$2
+    local image=$3
+    local venv_path="${MODELS_DIR}/${MODEL_VENV[wan14b]}"
+    local comfyui_dir="${MODELS_DIR}/ComfyUI"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+
+    source "$venv_path/bin/activate"
+
+    log_info "Iniciando WAN 14B Rapid (4 steps, FP8)..."
+    log_info "Modo: $mode"
+
+    # Usar o script Python de geração
+    python3 "${MODELS_DIR}/Wan14B-generate.py" "$mode" "$prompt" \
+        ${image:+--image "$image"} \
+        --output "wan14b_${timestamp}" 2>&1 | tee "${LOG_DIR}/wan14b_${timestamp}.log"
+
+    deactivate
+
+    echo ""
+    log_success "Geração concluída!"
+    echo ""
+    log_info "Últimos vídeos/imagens gerados:"
+    ls -lht "${OUTPUT_DIR}"/wan14b* 2>/dev/null | head -5
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -687,7 +734,7 @@ main() {
             exit 1
         fi
 
-        if [[ ! " ovi cogvideox wan " =~ " $model " ]]; then
+        if [[ ! " ovi cogvideox wan wan14b " =~ " $model " ]]; then
             log_error "Modelo inválido: $model"
             exit 1
         fi
@@ -740,6 +787,9 @@ main() {
             ;;
         wan)
             generate_wan "$mode" "$prompt" "$image"
+            ;;
+        wan14b)
+            generate_wan14b "$mode" "$prompt" "$image"
             ;;
     esac
 }

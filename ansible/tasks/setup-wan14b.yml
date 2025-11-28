@@ -1,0 +1,552 @@
+---
+# Setup WAN 2.2 14B Rapid AllInOne with ComfyUI
+# Run with: ansible-playbook playbook.yml --tags setup-wan14b
+#
+# Creates: /mnt/models/Wan14B-venv (isolated virtualenv)
+# Used by: generate-video.sh when model=wan14b
+
+- name: Display Wan14B setup banner
+  debug:
+    msg: |
+      ==========================================
+      🎬 SETTING UP WAN 2.2 14B RAPID AllInOne
+      ==========================================
+      Features:
+      - 14B parameters (merged WAN 2.1 + 2.2)
+      - Ultra-fast: 4 steps only!
+      - FP8 precision
+      - T2V + I2V + VACE (First-to-Last frame)
+      - Works on 8GB+ VRAM
+      - ComfyUI backend
+      - Isolated venv: {{ models_dir }}/Wan14B-venv
+      ==========================================
+  tags: [setup-wan14b]
+
+# ============================================
+# STEP 1: CREATE ISOLATED WAN14B-VENV
+# ============================================
+- name: Check if Wan14B-venv exists
+  stat:
+    path: "{{ models_dir }}/Wan14B-venv/bin/activate"
+  register: wan14b_venv_check
+  tags: [setup-wan14b]
+
+- name: Remove old Wan14B-venv if broken
+  file:
+    path: "{{ models_dir }}/Wan14B-venv"
+    state: absent
+  when: not wan14b_venv_check.stat.exists
+  tags: [setup-wan14b]
+
+- name: Create Wan14B-venv
+  command: python3 -m venv {{ models_dir }}/Wan14B-venv
+  become_user: ubuntu
+  when: not wan14b_venv_check.stat.exists
+  tags: [setup-wan14b]
+
+- name: Display venv status
+  debug:
+    msg: "✅ Wan14B-venv created: {{ models_dir }}/Wan14B-venv"
+  tags: [setup-wan14b]
+
+# ============================================
+# STEP 2: INSTALL DEPENDENCIES
+# ============================================
+- name: Upgrade pip, wheel, setuptools in Wan14B-venv
+  pip:
+    name:
+      - pip
+      - wheel
+      - setuptools
+    state: latest
+    virtualenv: "{{ models_dir }}/Wan14B-venv"
+  become_user: ubuntu
+  tags: [setup-wan14b]
+
+- name: Install PyTorch with CUDA 12.4
+  shell: |
+    source {{ models_dir }}/Wan14B-venv/bin/activate
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-wan14b]
+
+- name: Display PyTorch install status
+  debug:
+    msg: "✅ PyTorch installed with CUDA 12.4"
+  tags: [setup-wan14b]
+
+# ============================================
+# STEP 3: CLONE AND SETUP COMFYUI
+# ============================================
+- name: Check if ComfyUI exists
+  stat:
+    path: "{{ models_dir }}/ComfyUI/.git"
+  register: comfyui_check
+  tags: [setup-wan14b]
+
+- name: Clone ComfyUI repository
+  git:
+    repo: https://github.com/comfyanonymous/ComfyUI.git
+    dest: "{{ models_dir }}/ComfyUI"
+    version: master
+    force: yes
+  become_user: ubuntu
+  when: not comfyui_check.stat.exists
+  tags: [setup-wan14b]
+
+- name: Install ComfyUI requirements
+  pip:
+    requirements: "{{ models_dir }}/ComfyUI/requirements.txt"
+    virtualenv: "{{ models_dir }}/Wan14B-venv"
+  become_user: ubuntu
+  tags: [setup-wan14b]
+
+- name: Install additional ComfyUI dependencies
+  pip:
+    name:
+      - aiohttp
+      - einops
+      - transformers
+      - safetensors
+      - accelerate
+      - huggingface-hub
+      - opencv-python
+      - imageio
+      - imageio-ffmpeg
+    virtualenv: "{{ models_dir }}/Wan14B-venv"
+  become_user: ubuntu
+  tags: [setup-wan14b]
+
+- name: Display ComfyUI status
+  debug:
+    msg: "✅ ComfyUI installed: {{ models_dir }}/ComfyUI"
+  tags: [setup-wan14b]
+
+# ============================================
+# STEP 4: INSTALL COMFYUI-VIDEOHELPERSUITE
+# ============================================
+- name: Check if VideoHelperSuite exists
+  stat:
+    path: "{{ models_dir }}/ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite"
+  register: vhs_check
+  tags: [setup-wan14b]
+
+- name: Clone VideoHelperSuite
+  git:
+    repo: https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
+    dest: "{{ models_dir }}/ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite"
+    version: main
+  become_user: ubuntu
+  when: not vhs_check.stat.exists
+  tags: [setup-wan14b]
+
+- name: Install VideoHelperSuite requirements
+  pip:
+    requirements: "{{ models_dir }}/ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite/requirements.txt"
+    virtualenv: "{{ models_dir }}/Wan14B-venv"
+  become_user: ubuntu
+  ignore_errors: yes
+  tags: [setup-wan14b]
+
+# ============================================
+# STEP 5: CREATE DIRECTORIES FOR MODEL
+# ============================================
+- name: Create ComfyUI model directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  loop:
+    - "{{ models_dir }}/ComfyUI/models/checkpoints"
+    - "{{ models_dir }}/ComfyUI/models/clip"
+    - "{{ models_dir }}/ComfyUI/models/vae"
+    - "{{ models_dir }}/ComfyUI/output"
+  tags: [setup-wan14b]
+
+- name: Create symlink from ComfyUI output to /mnt/output
+  file:
+    src: "{{ output_dir }}"
+    dest: "{{ models_dir }}/ComfyUI/output/wan14b"
+    state: link
+  tags: [setup-wan14b]
+  ignore_errors: yes
+
+# ============================================
+# STEP 6: DOWNLOAD WAN 14B RAPID MODEL
+# ============================================
+- name: Check if Wan14B model exists
+  stat:
+    path: "{{ models_dir }}/ComfyUI/models/checkpoints/WAN2.2-14B-Rapid-MEGA-v12-I2V-FP8.safetensors"
+  register: wan14b_model_check
+  tags: [setup-wan14b]
+
+- name: Download Wan14B Rapid MEGA v12 I2V model
+  shell: |
+    source {{ models_dir }}/Wan14B-venv/bin/activate
+    cd {{ models_dir }}/ComfyUI/models/checkpoints
+    echo "📥 Downloading WAN 2.2 14B Rapid MEGA v12 I2V (~14GB)..."
+    huggingface-cli download Phr00t/WAN2.2-14B-Rapid-AllInOne \
+      WAN2.2-14B-Rapid-MEGA-v12-I2V-FP8.safetensors \
+      --local-dir . \
+      --local-dir-use-symlinks False
+  become_user: ubuntu
+  when: not wan14b_model_check.stat.exists
+  args:
+    executable: /bin/bash
+  async: 3600
+  poll: 30
+  tags: [setup-wan14b]
+
+- name: Check if Wan14B T2V model exists
+  stat:
+    path: "{{ models_dir }}/ComfyUI/models/checkpoints/WAN2.2-14B-Rapid-MEGA-v12-T2V-FP8.safetensors"
+  register: wan14b_t2v_check
+  tags: [setup-wan14b]
+
+- name: Download Wan14B Rapid MEGA v12 T2V model
+  shell: |
+    source {{ models_dir }}/Wan14B-venv/bin/activate
+    cd {{ models_dir }}/ComfyUI/models/checkpoints
+    echo "📥 Downloading WAN 2.2 14B Rapid MEGA v12 T2V (~14GB)..."
+    huggingface-cli download Phr00t/WAN2.2-14B-Rapid-AllInOne \
+      WAN2.2-14B-Rapid-MEGA-v12-T2V-FP8.safetensors \
+      --local-dir . \
+      --local-dir-use-symlinks False
+  become_user: ubuntu
+  when: not wan14b_t2v_check.stat.exists
+  args:
+    executable: /bin/bash
+  async: 3600
+  poll: 30
+  tags: [setup-wan14b]
+
+# ============================================
+# STEP 7: DOWNLOAD MEGA WORKFLOW
+# ============================================
+- name: Download MEGA workflow from HuggingFace
+  shell: |
+    source {{ models_dir }}/Wan14B-venv/bin/activate
+    cd {{ models_dir }}/ComfyUI
+    mkdir -p workflows
+    echo "📥 Downloading MEGA workflow..."
+    huggingface-cli download Phr00t/WAN2.2-14B-Rapid-AllInOne \
+      mega-v3/mega-workflow-api.json \
+      --local-dir workflows \
+      --local-dir-use-symlinks False 2>/dev/null || echo "Workflow download skipped"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  ignore_errors: yes
+  tags: [setup-wan14b]
+
+# ============================================
+# STEP 8: CREATE PYTHON GENERATION SCRIPT
+# ============================================
+- name: Create Wan14B generation script
+  copy:
+    dest: "{{ models_dir }}/Wan14B-generate.py"
+    content: |
+      #!/usr/bin/env python3
+      """
+      WAN 2.2 14B Rapid AllInOne - Video Generation Script
+      Uses ComfyUI API for generation with 4-step inference
+      """
+      import os
+      import sys
+      import json
+      import time
+      import argparse
+      import subprocess
+      import requests
+      from pathlib import Path
+
+      COMFYUI_DIR = "{{ models_dir }}/ComfyUI"
+      OUTPUT_DIR = "{{ output_dir }}"
+      MODELS_DIR = "{{ models_dir }}"
+
+      def start_comfyui_server():
+          """Start ComfyUI server if not running"""
+          try:
+              response = requests.get("http://127.0.0.1:8188/system_stats", timeout=2)
+              if response.status_code == 200:
+                  print("✅ ComfyUI server already running")
+                  return True
+          except:
+              pass
+
+          print("🚀 Starting ComfyUI server...")
+          env = os.environ.copy()
+          env["CUDA_VISIBLE_DEVICES"] = "0"
+
+          proc = subprocess.Popen(
+              [f"{MODELS_DIR}/Wan14B-venv/bin/python", "main.py", "--listen", "127.0.0.1", "--port", "8188"],
+              cwd=COMFYUI_DIR,
+              env=env,
+              stdout=subprocess.DEVNULL,
+              stderr=subprocess.DEVNULL
+          )
+
+          # Wait for server to start
+          for i in range(60):
+              try:
+                  response = requests.get("http://127.0.0.1:8188/system_stats", timeout=2)
+                  if response.status_code == 200:
+                      print("✅ ComfyUI server started")
+                      return True
+              except:
+                  pass
+              time.sleep(1)
+              print(f"   Waiting for server... ({i+1}/60)")
+
+          print("❌ Failed to start ComfyUI server")
+          return False
+
+      def generate_video_t2v(prompt: str, output_name: str = None):
+          """Generate T2V video using ComfyUI API"""
+
+          if not start_comfyui_server():
+              return None
+
+          # Simple workflow for T2V
+          workflow = {
+              "3": {
+                  "class_type": "CheckpointLoaderSimple",
+                  "inputs": {
+                      "ckpt_name": "WAN2.2-14B-Rapid-MEGA-v12-T2V-FP8.safetensors"
+                  }
+              },
+              "6": {
+                  "class_type": "CLIPTextEncode",
+                  "inputs": {
+                      "text": prompt,
+                      "clip": ["3", 1]
+                  }
+              },
+              "7": {
+                  "class_type": "CLIPTextEncode",
+                  "inputs": {
+                      "text": "",
+                      "clip": ["3", 1]
+                  }
+              },
+              "10": {
+                  "class_type": "EmptyLatentImage",
+                  "inputs": {
+                      "width": 832,
+                      "height": 480,
+                      "batch_size": 1
+                  }
+              },
+              "13": {
+                  "class_type": "KSampler",
+                  "inputs": {
+                      "seed": int(time.time()) % 1000000,
+                      "steps": 4,
+                      "cfg": 1.0,
+                      "sampler_name": "euler_a",
+                      "scheduler": "beta",
+                      "denoise": 1.0,
+                      "model": ["3", 0],
+                      "positive": ["6", 0],
+                      "negative": ["7", 0],
+                      "latent_image": ["10", 0]
+                  }
+              },
+              "8": {
+                  "class_type": "VAEDecode",
+                  "inputs": {
+                      "samples": ["13", 0],
+                      "vae": ["3", 2]
+                  }
+              },
+              "9": {
+                  "class_type": "SaveImage",
+                  "inputs": {
+                      "filename_prefix": output_name or "wan14b_t2v",
+                      "images": ["8", 0]
+                  }
+              }
+          }
+
+          # Queue prompt
+          response = requests.post(
+              "http://127.0.0.1:8188/prompt",
+              json={"prompt": workflow}
+          )
+
+          if response.status_code == 200:
+              result = response.json()
+              prompt_id = result.get("prompt_id")
+              print(f"📤 Queued prompt: {prompt_id}")
+
+              # Wait for completion
+              while True:
+                  history = requests.get(f"http://127.0.0.1:8188/history/{prompt_id}").json()
+                  if prompt_id in history:
+                      print("✅ Generation complete!")
+                      return history[prompt_id]
+                  time.sleep(1)
+          else:
+              print(f"❌ Error: {response.text}")
+              return None
+
+      def generate_video_i2v(prompt: str, image_path: str, output_name: str = None):
+          """Generate I2V video using ComfyUI API"""
+
+          if not start_comfyui_server():
+              return None
+
+          print(f"🖼️ Using image: {image_path}")
+          print(f"📝 Prompt: {prompt}")
+
+          # For I2V, we need a more complex workflow with image input
+          # This is a simplified version - full workflow in mega-v3 folder
+          workflow = {
+              "3": {
+                  "class_type": "CheckpointLoaderSimple",
+                  "inputs": {
+                      "ckpt_name": "WAN2.2-14B-Rapid-MEGA-v12-I2V-FP8.safetensors"
+                  }
+              },
+              "load_image": {
+                  "class_type": "LoadImage",
+                  "inputs": {
+                      "image": image_path
+                  }
+              },
+              "6": {
+                  "class_type": "CLIPTextEncode",
+                  "inputs": {
+                      "text": prompt,
+                      "clip": ["3", 1]
+                  }
+              },
+              "7": {
+                  "class_type": "CLIPTextEncode",
+                  "inputs": {
+                      "text": "",
+                      "clip": ["3", 1]
+                  }
+              },
+              "13": {
+                  "class_type": "KSampler",
+                  "inputs": {
+                      "seed": int(time.time()) % 1000000,
+                      "steps": 4,
+                      "cfg": 1.0,
+                      "sampler_name": "euler_a",
+                      "scheduler": "beta",
+                      "denoise": 1.0,
+                      "model": ["3", 0],
+                      "positive": ["6", 0],
+                      "negative": ["7", 0],
+                      "latent_image": ["load_image", 0]
+                  }
+              },
+              "8": {
+                  "class_type": "VAEDecode",
+                  "inputs": {
+                      "samples": ["13", 0],
+                      "vae": ["3", 2]
+                  }
+              },
+              "9": {
+                  "class_type": "SaveImage",
+                  "inputs": {
+                      "filename_prefix": output_name or "wan14b_i2v",
+                      "images": ["8", 0]
+                  }
+              }
+          }
+
+          response = requests.post(
+              "http://127.0.0.1:8188/prompt",
+              json={"prompt": workflow}
+          )
+
+          if response.status_code == 200:
+              result = response.json()
+              prompt_id = result.get("prompt_id")
+              print(f"📤 Queued prompt: {prompt_id}")
+
+              while True:
+                  history = requests.get(f"http://127.0.0.1:8188/history/{prompt_id}").json()
+                  if prompt_id in history:
+                      print("✅ Generation complete!")
+                      return history[prompt_id]
+                  time.sleep(1)
+          else:
+              print(f"❌ Error: {response.text}")
+              return None
+
+      if __name__ == "__main__":
+          parser = argparse.ArgumentParser(description="WAN 14B Rapid Video Generation")
+          parser.add_argument("mode", choices=["t2v", "i2v"], help="Generation mode")
+          parser.add_argument("prompt", help="Text prompt")
+          parser.add_argument("--image", "-i", help="Image path for I2V mode")
+          parser.add_argument("--output", "-o", help="Output filename prefix")
+
+          args = parser.parse_args()
+
+          if args.mode == "t2v":
+              generate_video_t2v(args.prompt, args.output)
+          elif args.mode == "i2v":
+              if not args.image:
+                  print("❌ I2V mode requires --image parameter")
+                  sys.exit(1)
+              generate_video_i2v(args.prompt, args.image, args.output)
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-wan14b]
+
+# ============================================
+# STEP 9: VERIFY INSTALLATION
+# ============================================
+- name: Verify Wan14B installation
+  shell: |
+    source {{ models_dir }}/Wan14B-venv/bin/activate
+    echo "PyTorch: $(python -c 'import torch; print(torch.__version__)')"
+    echo "CUDA: $(python -c 'import torch; print(torch.cuda.is_available())')"
+    echo ""
+    echo "Models downloaded:"
+    ls -lh {{ models_dir }}/ComfyUI/models/checkpoints/*.safetensors 2>/dev/null | head -5 || echo "  (none yet)"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  register: wan14b_verify
+  tags: [setup-wan14b]
+  ignore_errors: yes
+
+- name: Display setup complete
+  debug:
+    msg: |
+      ==========================================
+      ✅ WAN 14B RAPID SETUP COMPLETE
+      ==========================================
+
+      📁 Locations:
+         Venv:     {{ models_dir }}/Wan14B-venv
+         ComfyUI:  {{ models_dir }}/ComfyUI
+         Models:   {{ models_dir }}/ComfyUI/models/checkpoints/
+         Output:   {{ output_dir }}
+
+      🔍 Installation Check:
+      {{ wan14b_verify.stdout }}
+
+      🎬 Usage:
+         generate-video wan14b t2v "Your prompt"
+         generate-video wan14b i2v "Your prompt" /path/to/image.png
+
+      ⚡ Performance:
+         - Only 4 steps (vs 50 for Ovi)
+         - CFG: 1.0
+         - Sampler: euler_a / beta scheduler
+         - Works on 8GB+ VRAM
+
+      ==========================================
+  tags: [setup-wan14b]
