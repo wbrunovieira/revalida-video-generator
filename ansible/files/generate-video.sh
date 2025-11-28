@@ -85,7 +85,7 @@ show_banner() {
     echo "╠═══════════════════════════════════════════════════════════════╣"
     echo "║  Modelos disponíveis:                                         ║"
     echo "║    • ovi       - Video + Audio sincronizado (T2V/I2V)        ║"
-    echo "║    • cogvideox - Alta qualidade, multi-GPU (T2V)             ║"
+    echo "║    • cogvideox - Alta qualidade, multi-GPU (T2V/I2V)         ║"
     echo "║    • wan       - Versátil, T2V + I2V                         ║"
     echo "║    • wan14b    - Ultra-rápido 4 steps! (T2V/I2V) [NOVO]      ║"
     echo "╠═══════════════════════════════════════════════════════════════╣"
@@ -560,28 +560,39 @@ EOF
 }
 
 # =============================================================================
-# Geração de vídeo - CogVideoX
+# Geração de vídeo - CogVideoX (T2V + I2V)
 # =============================================================================
 
 generate_cogvideox() {
     local mode=$1
     local prompt=$2
     local use_multi_gpu=$3
+    local image=$4
     local venv_path="${MODELS_DIR}/${MODEL_VENV[cogvideox]}"
     local timestamp=$(date +%Y%m%d_%H%M%S)
 
     source "$venv_path/bin/activate"
 
-    log_info "Iniciando CogVideoX-5B..."
+    if [ "$mode" == "t2v" ]; then
+        log_info "Iniciando CogVideoX-5B Text-to-Video..."
+    else
+        log_info "Iniciando CogVideoX1.5-5B Image-to-Video..."
+    fi
     log_info "Mode: $mode"
     log_info "Multi-GPU: $use_multi_gpu"
 
-    # Build command with options
-    local cmd_args="\"${prompt}\" --output-name cogvideox_${timestamp}"
+    # Build command with mode and options
+    local cmd_args="$mode \"${prompt}\" --output-name cogvideox_${mode}_${timestamp}"
 
     if [ "$use_multi_gpu" == "true" ] && [ "$NUM_GPUS" -gt 1 ]; then
         log_info "Usando Multi-GPU (${NUM_GPUS} GPUs)..."
         cmd_args="$cmd_args --multi-gpu"
+    fi
+
+    # Add image for I2V mode
+    if [ "$mode" == "i2v" ] && [ -n "$image" ]; then
+        log_info "Imagem: $image"
+        cmd_args="$cmd_args --image \"$image\""
     fi
 
     python3 "${MODELS_DIR}/CogVideoX-generate.py" $cmd_args 2>&1 | tee "${LOG_DIR}/cogvideox_${timestamp}.log"
@@ -787,7 +798,7 @@ main() {
             generate_ovi "$mode" "$prompt" "$image" "$use_multi_gpu" "$model_variant"
             ;;
         cogvideox)
-            generate_cogvideox "$mode" "$prompt" "$use_multi_gpu"
+            generate_cogvideox "$mode" "$prompt" "$use_multi_gpu" "$image"
             ;;
         wan)
             generate_wan "$mode" "$prompt" "$image"
