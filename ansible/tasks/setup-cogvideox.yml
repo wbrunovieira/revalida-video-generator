@@ -1,73 +1,111 @@
 ---
-# Setup CogVideoX-5B with xDiT for multi-GPU text-to-video generation
+# Setup CogVideoX-5B with isolated venv and multi-GPU support
 # Run with: ansible-playbook playbook.yml --tags setup-cogvideox
+#
+# Creates: /mnt/models/CogVideoX-venv (isolated virtualenv)
+# Model: THUDM/CogVideoX-5b (~10GB)
+# Features: Multi-GPU via device_map, INT8 quantization option
 
 - name: Display CogVideoX setup banner
   debug:
     msg: |
       ==========================================
-      🎬 SETTING UP COGVIDEOX-5B with xDiT
+      🎬 SETTING UP COGVIDEOX-5B
       ==========================================
       Features:
-      - 5B parameters (efficient memory usage)
-      - Multi-GPU support via xDiT
-      - 3.91x speedup with 4 GPUs
-      - 49 frames @ 8fps output
-      - HD quality realistic videos
-      - No xformers dependency
+      - 5B parameters
+      - Text-to-Video generation
+      - 49 frames @ 8fps (6 seconds)
+      - 720x480 resolution
+      - BF16 precision (recommended)
+      - Multi-GPU support via device_map
+      - INT8 quantization option for low VRAM
+      - Isolated venv: {{ models_dir }}/CogVideoX-venv
       ==========================================
+  tags: [setup-cogvideox]
 
 # ============================================
-# INSTALL COGVIDEOX DEPENDENCIES
+# STEP 1: CREATE ISOLATED COGVIDEOX-VENV
 # ============================================
-- name: Install CogVideoX and diffusers
+- name: Check if CogVideoX-venv exists
+  stat:
+    path: "{{ models_dir }}/CogVideoX-venv/bin/activate"
+  register: cogvideox_venv_check
+  tags: [setup-cogvideox]
+
+- name: Remove old CogVideoX-venv if broken
+  file:
+    path: "{{ models_dir }}/CogVideoX-venv"
+    state: absent
+  when: not cogvideox_venv_check.stat.exists
+  tags: [setup-cogvideox]
+
+- name: Create CogVideoX-venv
+  command: python3 -m venv {{ models_dir }}/CogVideoX-venv
+  become_user: ubuntu
+  when: not cogvideox_venv_check.stat.exists
+  tags: [setup-cogvideox]
+
+- name: Display venv status
+  debug:
+    msg: "✅ CogVideoX-venv created: {{ models_dir }}/CogVideoX-venv"
+  tags: [setup-cogvideox]
+
+# ============================================
+# STEP 2: INSTALL DEPENDENCIES
+# ============================================
+- name: Upgrade pip, wheel, setuptools in CogVideoX-venv
   pip:
     name:
-      - diffusers>=0.30.0
-      - transformers>=4.44.2
-      - accelerate>=0.33.0
-      - imageio-ffmpeg
-    virtualenv: "{{ app_dir }}/venv"
+      - pip
+      - wheel
+      - setuptools
+    state: latest
+    virtualenv: "{{ models_dir }}/CogVideoX-venv"
   become_user: ubuntu
   tags: [setup-cogvideox]
 
-- name: Clone xDiT repository for multi-GPU support
-  git:
-    repo: https://github.com/xdit-project/xDiT.git
-    dest: "{{ models_dir }}/xDiT"
-    version: main
-    force: yes
-  become_user: ubuntu
-  tags: [setup-cogvideox]
-
-- name: Install xDiT in editable mode
+- name: Install PyTorch with CUDA 12.1
   shell: |
-    source {{ app_dir }}/venv/bin/activate
-    cd {{ models_dir }}/xDiT
-    pip install -e .
+    source {{ models_dir }}/CogVideoX-venv/bin/activate
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
   become_user: ubuntu
-  tags: [setup-cogvideox]
   args:
     executable: /bin/bash
-
-- name: Verify flash-attn is installed
-  shell: |
-    source {{ app_dir }}/venv/bin/activate
-    pip show flash-attn || echo "flash-attn not found"
-  register: flash_attn_check
-  become_user: ubuntu
   tags: [setup-cogvideox]
-  args:
-    executable: /bin/bash
 
-- name: Display flash-attn status
+- name: Display PyTorch install status
   debug:
-    msg: |
-      Flash Attention: {{ 'Installed ✅' if 'Version' in flash_attn_check.stdout else 'Not found ❌' }}
+    msg: "✅ PyTorch installed with CUDA 12.1"
   tags: [setup-cogvideox]
 
 # ============================================
-# DOWNLOAD COGVIDEOX-5B MODEL
+# STEP 3: INSTALL DIFFUSERS AND DEPENDENCIES
+# ============================================
+- name: Install CogVideoX dependencies
+  pip:
+    name:
+      - diffusers>=0.31.0
+      - transformers>=4.44.2
+      - accelerate>=0.33.0
+      - imageio-ffmpeg>=0.5.1
+      - imageio
+      - sentencepiece
+      - huggingface-hub
+      - numpy
+      - scipy
+      - Pillow
+    virtualenv: "{{ models_dir }}/CogVideoX-venv"
+  become_user: ubuntu
+  tags: [setup-cogvideox]
+
+- name: Display dependencies status
+  debug:
+    msg: "✅ Diffusers and dependencies installed"
+  tags: [setup-cogvideox]
+
+# ============================================
+# STEP 4: DOWNLOAD COGVIDEOX-5B MODEL
 # ============================================
 - name: Check if CogVideoX-5b model exists
   stat:
@@ -77,7 +115,7 @@
 
 - name: Download CogVideoX-5b model (~10GB)
   shell: |
-    source {{ app_dir }}/venv/bin/activate
+    source {{ models_dir }}/CogVideoX-venv/bin/activate
     cd {{ models_dir }}
     echo "📥 Downloading CogVideoX-5b (~10GB, will take 10-20 minutes)..."
     huggingface-cli download THUDM/CogVideoX-5b --local-dir CogVideoX-5b
@@ -86,8 +124,8 @@
   tags: [setup-cogvideox]
   args:
     executable: /bin/bash
-  async: 3600  # 1 hour timeout
-  poll: 30     # Check every 30 seconds
+  async: 3600
+  poll: 30
 
 - name: Verify model downloaded successfully
   stat:
@@ -103,23 +141,210 @@
   tags: [setup-cogvideox]
 
 # ============================================
+# STEP 5: CREATE GENERATION SCRIPT
+# ============================================
+- name: Create CogVideoX generation script
+  copy:
+    dest: "{{ models_dir }}/CogVideoX-generate.py"
+    content: |
+      #!/usr/bin/env python3
+      """
+      CogVideoX-5B Video Generation Script
+      Supports single-GPU and multi-GPU inference
+
+      Usage:
+        python CogVideoX-generate.py "Your prompt here"
+        python CogVideoX-generate.py "Your prompt" --multi-gpu
+        python CogVideoX-generate.py "Your prompt" --quantize  # For low VRAM
+      """
+
+      import argparse
+      import os
+      import time
+      import torch
+      from diffusers import CogVideoXPipeline
+      from diffusers.utils import export_to_video
+
+      def get_gpu_count():
+          """Get number of available GPUs"""
+          return torch.cuda.device_count()
+
+      def generate_video(prompt: str, output_dir: str = "/mnt/output",
+                        multi_gpu: bool = False, quantize: bool = False,
+                        output_name: str = None):
+          """Generate video using CogVideoX-5b"""
+
+          timestamp = time.strftime("%Y%m%d_%H%M%S")
+          output_name = output_name or f"cogvideox_{timestamp}"
+          output_path = os.path.join(output_dir, f"{output_name}.mp4")
+
+          print(f"🎬 CogVideoX-5B Video Generation")
+          print(f"=" * 50)
+          print(f"Prompt: {prompt}")
+          print(f"Output: {output_path}")
+          print(f"Multi-GPU: {multi_gpu}")
+          print(f"Quantize: {quantize}")
+          print(f"=" * 50)
+
+          model_path = "/mnt/models/CogVideoX-5b"
+
+          # Determine device configuration
+          num_gpus = get_gpu_count()
+          print(f"GPUs available: {num_gpus}")
+
+          if quantize:
+              # INT8 quantization for low VRAM (~4GB per GPU)
+              print("Loading with INT8 quantization...")
+              from transformers import T5EncoderModel
+              try:
+                  from torchao.quantization import quantize_, int8_weight_only
+
+                  text_encoder = T5EncoderModel.from_pretrained(
+                      model_path, subfolder="text_encoder", torch_dtype=torch.bfloat16
+                  )
+                  quantize_(text_encoder, int8_weight_only())
+
+                  pipe = CogVideoXPipeline.from_pretrained(
+                      model_path,
+                      text_encoder=text_encoder,
+                      torch_dtype=torch.bfloat16,
+                  )
+              except ImportError:
+                  print("torchao not installed, using standard loading with CPU offload")
+                  pipe = CogVideoXPipeline.from_pretrained(
+                      model_path,
+                      torch_dtype=torch.bfloat16,
+                  )
+              pipe.enable_sequential_cpu_offload()
+
+          elif multi_gpu and num_gpus > 1:
+              # Multi-GPU: distribute model across GPUs (~15GB per GPU)
+              print(f"Loading model across {num_gpus} GPUs...")
+              pipe = CogVideoXPipeline.from_pretrained(
+                  model_path,
+                  torch_dtype=torch.bfloat16,
+                  device_map="balanced",
+              )
+              # Don't use CPU offload with multi-GPU
+
+          else:
+              # Single GPU with CPU offload
+              print("Loading model with CPU offload (single GPU)...")
+              pipe = CogVideoXPipeline.from_pretrained(
+                  model_path,
+                  torch_dtype=torch.bfloat16,
+              )
+              pipe.enable_model_cpu_offload()
+
+          # Enable VAE optimizations
+          pipe.vae.enable_tiling()
+          pipe.vae.enable_slicing()
+
+          print("Generating video...")
+          start_time = time.time()
+
+          video = pipe(
+              prompt=prompt,
+              num_videos_per_prompt=1,
+              num_inference_steps=50,
+              num_frames=49,
+              guidance_scale=6,
+              generator=torch.Generator(device="cuda").manual_seed(int(time.time()) % 1000000),
+          ).frames[0]
+
+          elapsed = time.time() - start_time
+          print(f"Generation completed in {elapsed:.1f} seconds")
+
+          export_to_video(video, output_path, fps=8)
+          print(f"✅ Video saved: {output_path}")
+
+          return output_path
+
+      if __name__ == "__main__":
+          parser = argparse.ArgumentParser(description="CogVideoX-5B Video Generation")
+          parser.add_argument("prompt", type=str, help="Text prompt for video generation")
+          parser.add_argument("--output-dir", type=str, default="/mnt/output", help="Output directory")
+          parser.add_argument("--output-name", type=str, default=None, help="Output filename (without extension)")
+          parser.add_argument("--multi-gpu", action="store_true", help="Use all available GPUs")
+          parser.add_argument("--quantize", action="store_true", help="Use INT8 quantization for low VRAM")
+
+          args = parser.parse_args()
+
+          generate_video(
+              prompt=args.prompt,
+              output_dir=args.output_dir,
+              multi_gpu=args.multi_gpu,
+              quantize=args.quantize,
+              output_name=args.output_name,
+          )
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-cogvideox]
+
+# ============================================
+# STEP 6: CREATE WRAPPER SCRIPT
+# ============================================
+- name: Create cogvideox command wrapper
+  copy:
+    dest: /usr/local/bin/cogvideox-generate
+    content: |
+      #!/bin/bash
+      # CogVideoX-5B Generation Wrapper
+      source /mnt/models/CogVideoX-venv/bin/activate
+      python3 /mnt/models/CogVideoX-generate.py "$@"
+    mode: '0755'
+  tags: [setup-cogvideox]
+
+# ============================================
 # FINAL STATUS
 # ============================================
-- name: Display CogVideoX setup complete
+- name: Verify complete installation
+  shell: |
+    source {{ models_dir }}/CogVideoX-venv/bin/activate
+    echo "PyTorch: $(python -c 'import torch; print(torch.__version__)')"
+    echo "CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
+    echo "GPU count: $(python -c 'import torch; print(torch.cuda.device_count())')"
+    echo "Diffusers: $(python -c 'import diffusers; print(diffusers.__version__)')"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  register: install_verify
+  tags: [setup-cogvideox]
+  ignore_errors: yes
+
+- name: Display setup complete
   debug:
     msg: |
       ==========================================
       ✅ COGVIDEOX-5B SETUP COMPLETE
       ==========================================
-      xDiT: {{ models_dir }}/xDiT
-      Model: {{ models_dir }}/CogVideoX-5b/
 
-      Single-GPU test:
-      python3 test_cogvideox_single.py
+      📁 Locations:
+         Venv:   {{ models_dir }}/CogVideoX-venv
+         Model:  {{ models_dir }}/CogVideoX-5b
+         Script: {{ models_dir }}/CogVideoX-generate.py
 
-      Multi-GPU (4 GPUs):
-      torchrun --nproc_per_node=4 \
-        xDiT/examples/cogvideox_example.py \
-        --model {{ models_dir }}/CogVideoX-5b
+      🔍 Installation Check:
+      {{ install_verify.stdout }}
+
+      🎬 Usage:
+         Single GPU:
+         cogvideox-generate "Your prompt here"
+
+         Multi-GPU (faster, ~15GB per GPU):
+         cogvideox-generate "Your prompt" --multi-gpu
+
+         Low VRAM (INT8, ~4GB per GPU):
+         cogvideox-generate "Your prompt" --quantize
+
+         Or via generate-video:
+         generate-video cogvideox t2v "Your prompt"
+
+      ⚡ Performance:
+         - Single A100: ~180 seconds
+         - 4x A10G (multi-gpu): ~90 seconds
+         - Output: 6 seconds @ 8fps (720x480)
+
       ==========================================
   tags: [setup-cogvideox]

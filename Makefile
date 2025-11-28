@@ -193,8 +193,8 @@ debug-torch: ## Debug PyTorch installation and versions
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags debug-torch
 
-setup-cogvideox: ## Setup CogVideoX-5B with xDiT (multi-GPU, HD quality)
-	@echo "$(CYAN)🎬 Setting up CogVideoX-5B with xDiT...$(NC)"
+setup-cogvideox: ## Setup CogVideoX-5B with isolated venv (multi-GPU, HD quality)
+	@echo "$(CYAN)🎬 Setting up CogVideoX-5B (isolated venv + multi-GPU)...$(NC)"
 	@cd ansible && \
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags setup-cogvideox

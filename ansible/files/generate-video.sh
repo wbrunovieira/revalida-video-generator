@@ -553,42 +553,33 @@ EOF
 generate_cogvideox() {
     local mode=$1
     local prompt=$2
+    local use_multi_gpu=$3
     local venv_path="${MODELS_DIR}/${MODEL_VENV[cogvideox]}"
     local timestamp=$(date +%Y%m%d_%H%M%S)
 
     source "$venv_path/bin/activate"
 
-    log_info "Iniciando CogVideoX..."
+    log_info "Iniciando CogVideoX-5B..."
+    log_info "Mode: $mode"
+    log_info "Multi-GPU: $use_multi_gpu"
 
-    python3 << EOF 2>&1 | tee "${LOG_DIR}/cogvideox_${timestamp}.log"
-import torch
-from diffusers import CogVideoXPipeline
-from diffusers.utils import export_to_video
+    # Build command with options
+    local cmd_args="\"${prompt}\" --output-name cogvideox_${timestamp}"
 
-print("Carregando modelo CogVideoX-5b...")
-pipe = CogVideoXPipeline.from_pretrained(
-    "${MODELS_DIR}/CogVideoX-5b",
-    torch_dtype=torch.bfloat16
-)
-pipe.enable_model_cpu_offload()
-pipe.vae.enable_tiling()
+    if [ "$use_multi_gpu" == "true" ] && [ "$NUM_GPUS" -gt 1 ]; then
+        log_info "Usando Multi-GPU (${NUM_GPUS} GPUs)..."
+        cmd_args="$cmd_args --multi-gpu"
+    fi
 
-print("Gerando vídeo...")
-video = pipe(
-    prompt="${prompt}",
-    num_videos_per_prompt=1,
-    num_inference_steps=50,
-    num_frames=49,
-    guidance_scale=6,
-).frames[0]
-
-output_path = "${OUTPUT_DIR}/cogvideox_${timestamp}.mp4"
-export_to_video(video, output_path, fps=8)
-print(f"Vídeo salvo em: {output_path}")
-EOF
+    python3 "${MODELS_DIR}/CogVideoX-generate.py" $cmd_args 2>&1 | tee "${LOG_DIR}/cogvideox_${timestamp}.log"
 
     deactivate
+
+    echo ""
     log_success "Geração concluída!"
+    echo ""
+    log_info "Últimos vídeos gerados:"
+    ls -lht "${OUTPUT_DIR}"/cogvideox*.mp4 2>/dev/null | head -5
 }
 
 # =============================================================================
@@ -783,7 +774,7 @@ main() {
             generate_ovi "$mode" "$prompt" "$image" "$use_multi_gpu" "$model_variant"
             ;;
         cogvideox)
-            generate_cogvideox "$mode" "$prompt"
+            generate_cogvideox "$mode" "$prompt" "$use_multi_gpu"
             ;;
         wan)
             generate_wan "$mode" "$prompt" "$image"
