@@ -309,7 +309,9 @@
           if not start_comfyui_server():
               return None
 
-          # Simple workflow for T2V
+          print(f"📝 Prompt: {prompt}")
+
+          # T2V workflow with WanTextToVideo for video latent generation
           workflow = {
               "3": {
                   "class_type": "CheckpointLoaderSimple",
@@ -331,11 +333,15 @@
                       "clip": ["3", 1]
                   }
               },
-              "10": {
-                  "class_type": "EmptyLatentImage",
+              "wan_t2v": {
+                  "class_type": "WanTextToVideo",
                   "inputs": {
+                      "positive": ["6", 0],
+                      "negative": ["7", 0],
+                      "vae": ["3", 2],
                       "width": 832,
                       "height": 480,
+                      "length": 81,
                       "batch_size": 1
                   }
               },
@@ -349,9 +355,9 @@
                       "scheduler": "beta",
                       "denoise": 1.0,
                       "model": ["3", 0],
-                      "positive": ["6", 0],
-                      "negative": ["7", 0],
-                      "latent_image": ["10", 0]
+                      "positive": ["wan_t2v", 0],
+                      "negative": ["wan_t2v", 1],
+                      "latent_image": ["wan_t2v", 2]
                   }
               },
               "8": {
@@ -361,11 +367,16 @@
                       "vae": ["3", 2]
                   }
               },
-              "9": {
-                  "class_type": "SaveImage",
+              "video_combine": {
+                  "class_type": "VHS_VideoCombine",
                   "inputs": {
+                      "images": ["8", 0],
+                      "frame_rate": 24,
+                      "loop_count": 0,
                       "filename_prefix": output_name or "wan14b_t2v",
-                      "images": ["8", 0]
+                      "format": "video/h264-mp4",
+                      "pingpong": False,
+                      "save_output": True
                   }
               }
           }
