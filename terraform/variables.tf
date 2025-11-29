@@ -96,11 +96,8 @@ variable "models_volume_size" {
   default     = 500 # Ovi ~91GB + Wan 30GB + CogVideoX ~25GB + extras
 }
 
-variable "output_volume_size" {
-  description = "EBS volume size in GB for generated videos"
-  type        = number
-  default     = 200
-}
+# REMOVED: output_volume_size
+# Videos now stored on ephemeral Instance Store (3.5TB)
 
 # AMI Configuration
 variable "ami_id" {

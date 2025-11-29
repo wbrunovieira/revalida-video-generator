@@ -176,15 +176,9 @@ resource "aws_volume_attachment" "models" {
   force_detach = false
 }
 
-# Attach output volume
-resource "aws_volume_attachment" "output" {
-  device_name = "/dev/sdg"
-  volume_id   = aws_ebs_volume.output.id
-  instance_id = aws_instance.video_generation.id
-
-  # Don't force detach on destroy
-  force_detach = false
-}
+# REMOVED: aws_volume_attachment.output
+# Videos now stored on ephemeral Instance Store (3.5TB)
+# and synced to local via SSH (make sync-videos)
 
 # Elastic IP for persistent IP address
 resource "aws_eip" "video_generation" {

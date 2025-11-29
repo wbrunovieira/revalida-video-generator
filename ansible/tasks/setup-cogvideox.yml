@@ -4,9 +4,11 @@
 #
 # Creates: /mnt/models/CogVideoX-venv (isolated virtualenv)
 # Models:
-#   - THUDM/CogVideoX-5b (~10GB) - Text-to-Video -> /mnt/models/
-#   - THUDM/CogVideoX1.5-5B-I2V (~15GB) - Image-to-Video -> /mnt/models2/ (symlinked)
+#   - THUDM/CogVideoX-5b (~10GB) - Text-to-Video
+#   - THUDM/CogVideoX1.5-5B-I2V (~15GB) - Image-to-Video
 # Features: Multi-GPU via device_map, INT8 quantization option
+#
+# Storage: Uses /mnt/models (500GB EBS mounted via mount-ebs.sh)
 
 - name: Display CogVideoX setup banner
   debug:
@@ -144,42 +146,27 @@
 
 # ============================================
 # STEP 5: DOWNLOAD COGVIDEOX1.5-5B-I2V MODEL
-# Downloads to /mnt/models2 (more space) and creates symlink
+# Downloads directly to /mnt/models (500GB EBS)
 # ============================================
-- name: Check if CogVideoX1.5-5B-I2V model exists (symlink or direct)
+- name: Check if CogVideoX1.5-5B-I2V model exists
   stat:
     path: "{{ models_dir }}/CogVideoX1.5-5B-I2V/model_index.json"
   register: cogvideox_i2v_check
   tags: [setup-cogvideox]
 
-- name: Check if I2V model exists in models2
-  stat:
-    path: /mnt/models2/CogVideoX1.5-5B-I2V/model_index.json
-  register: cogvideox_i2v_models2_check
-  tags: [setup-cogvideox]
-
-- name: Download CogVideoX1.5-5B-I2V to /mnt/models2 (~15GB)
+- name: Download CogVideoX1.5-5B-I2V model (~15GB)
   shell: |
     source {{ models_dir }}/CogVideoX-venv/bin/activate
-    cd /mnt/models2
-    echo "📥 Downloading CogVideoX1.5-5B-I2V to /mnt/models2 (~15GB, will take 15-30 minutes)..."
+    cd {{ models_dir }}
+    echo "📥 Downloading CogVideoX1.5-5B-I2V (~15GB, will take 15-30 minutes)..."
     huggingface-cli download THUDM/CogVideoX1.5-5B-I2V --local-dir CogVideoX1.5-5B-I2V
   become_user: ubuntu
-  when: not cogvideox_i2v_check.stat.exists and not cogvideox_i2v_models2_check.stat.exists
+  when: not cogvideox_i2v_check.stat.exists
   tags: [setup-cogvideox]
   args:
     executable: /bin/bash
   async: 3600
   poll: 30
-
-- name: Create symlink from models to models2 for I2V
-  file:
-    src: /mnt/models2/CogVideoX1.5-5B-I2V
-    dest: "{{ models_dir }}/CogVideoX1.5-5B-I2V"
-    state: link
-    force: yes
-  when: not cogvideox_i2v_check.stat.exists
-  tags: [setup-cogvideox]
 
 - name: Verify I2V model downloaded successfully
   stat:
@@ -191,7 +178,7 @@
   debug:
     msg: |
       CogVideoX1.5-5B-I2V: {{ 'Downloaded ✅' if cogvideox_i2v_final.stat.exists else 'Failed ❌' }}
-      Location: /mnt/models2/CogVideoX1.5-5B-I2V/ (symlinked to {{ models_dir }})
+      Location: {{ models_dir }}/CogVideoX1.5-5B-I2V/
   tags: [setup-cogvideox]
 
 # ============================================
@@ -340,58 +327,16 @@
           num_gpus = get_gpu_count()
           print(f"GPUs available: {num_gpus}")
 
-          if quantize:
-              print("Loading with INT8 quantization...")
-              from transformers import T5EncoderModel
-              from diffusers import AutoencoderKLCogVideoX, CogVideoXTransformer3DModel
-              try:
-                  from torchao.quantization import quantize_, int8_weight_only
+          # Note: device_map doesn't work with I2V - always use CPU offload
+          print(f"Loading model with aggressive CPU offload...")
+          if multi_gpu:
+              print("Note: Multi-GPU device_map not compatible with I2V - using CPU offload")
 
-                  text_encoder = T5EncoderModel.from_pretrained(
-                      model_path, subfolder="text_encoder", torch_dtype=torch.bfloat16
-                  )
-                  quantize_(text_encoder, int8_weight_only())
-
-                  transformer = CogVideoXTransformer3DModel.from_pretrained(
-                      model_path, subfolder="transformer", torch_dtype=torch.bfloat16
-                  )
-                  quantize_(transformer, int8_weight_only())
-
-                  vae = AutoencoderKLCogVideoX.from_pretrained(
-                      model_path, subfolder="vae", torch_dtype=torch.bfloat16
-                  )
-                  quantize_(vae, int8_weight_only())
-
-                  pipe = CogVideoXImageToVideoPipeline.from_pretrained(
-                      model_path,
-                      text_encoder=text_encoder,
-                      transformer=transformer,
-                      vae=vae,
-                      torch_dtype=torch.bfloat16,
-                  )
-              except ImportError:
-                  print("torchao not installed, using standard loading with CPU offload")
-                  pipe = CogVideoXImageToVideoPipeline.from_pretrained(
-                      model_path,
-                      torch_dtype=torch.bfloat16,
-                  )
-              pipe.enable_model_cpu_offload()
-
-          elif multi_gpu and num_gpus > 1:
-              print(f"Loading model across {num_gpus} GPUs...")
-              pipe = CogVideoXImageToVideoPipeline.from_pretrained(
-                  model_path,
-                  torch_dtype=torch.bfloat16,
-                  device_map="balanced",
-              )
-
-          else:
-              print("Loading model with CPU offload (single GPU)...")
-              pipe = CogVideoXImageToVideoPipeline.from_pretrained(
-                  model_path,
-                  torch_dtype=torch.bfloat16,
-              )
-              pipe.enable_sequential_cpu_offload()
+          pipe = CogVideoXImageToVideoPipeline.from_pretrained(
+              model_path,
+              torch_dtype=torch.bfloat16,
+          )
+          pipe.enable_model_cpu_offload(gpu_id=0)
 
           pipe.vae.enable_tiling()
           pipe.vae.enable_slicing()
@@ -500,7 +445,7 @@
       📁 Locations:
          Venv:      {{ models_dir }}/CogVideoX-venv
          T2V Model: {{ models_dir }}/CogVideoX-5b
-         I2V Model: /mnt/models2/CogVideoX1.5-5B-I2V (symlinked to {{ models_dir }})
+         I2V Model: {{ models_dir }}/CogVideoX1.5-5B-I2V
          Script:    {{ models_dir }}/CogVideoX-generate.py
 
       🔍 Installation Check:

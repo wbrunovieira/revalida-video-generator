@@ -78,6 +78,56 @@ log_step() {
     echo -e "${CYAN}==>${NC} $1"
 }
 
+# =============================================================================
+# GPU Cleanup - Kill lingering processes to free VRAM
+# =============================================================================
+
+cleanup_gpu_processes() {
+    log_step "Verificando processos GPU em execução..."
+
+    # Get PIDs of processes using GPU memory
+    local gpu_pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | tr -d ' ' || true)
+
+    if [ -n "$gpu_pids" ]; then
+        log_info "Processos GPU detectados:"
+        nvidia-smi --query-compute-apps=pid,used_memory,name --format=csv,noheader 2>/dev/null | while read line; do
+            echo "   $line"
+        done
+
+        # Kill each process using GPU
+        for pid in $gpu_pids; do
+            if [ -n "$pid" ] && [ "$pid" != "pid" ]; then
+                local proc_name=$(ps -p $pid -o comm= 2>/dev/null || echo "unknown")
+                log_warn "Matando processo GPU: PID $pid ($proc_name)"
+                kill $pid 2>/dev/null || true
+            fi
+        done
+
+        sleep 3
+
+        # Force kill if still running
+        for pid in $gpu_pids; do
+            if [ -n "$pid" ] && [ "$pid" != "pid" ] && kill -0 $pid 2>/dev/null; then
+                log_warn "Forçando kill -9 no PID $pid"
+                kill -9 $pid 2>/dev/null || true
+            fi
+        done
+
+        sleep 2
+
+        # Verify cleanup
+        local remaining=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | tr -d ' ' || true)
+        if [ -z "$remaining" ]; then
+            log_success "Todos processos GPU encerrados - VRAM livre!"
+        else
+            log_warn "Alguns processos ainda rodando. Verifique manualmente."
+        fi
+    else
+        log_success "Nenhum processo GPU ativo - VRAM livre!"
+    fi
+    echo ""
+}
+
 show_banner() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
@@ -587,21 +637,21 @@ generate_cogvideox() {
     log_info "Mode: $mode"
     log_info "Multi-GPU: $use_multi_gpu"
 
-    # Build command with mode and options
-    local cmd_args="$mode \"${prompt}\" --output-name cogvideox_${mode}_${timestamp}"
+    # Build command as an array to preserve quoting
+    local -a cmd_args=("$mode" "$prompt" "--output-name" "cogvideox_${mode}_${timestamp}")
 
     if [ "$use_multi_gpu" == "true" ] && [ "$NUM_GPUS" -gt 1 ]; then
         log_info "Usando Multi-GPU (${NUM_GPUS} GPUs)..."
-        cmd_args="$cmd_args --multi-gpu"
+        cmd_args+=("--multi-gpu")
     fi
 
     # Add image for I2V mode
     if [ "$mode" == "i2v" ] && [ -n "$image" ]; then
         log_info "Imagem: $image"
-        cmd_args="$cmd_args --image \"$image\""
+        cmd_args+=("--image" "$image")
     fi
 
-    python3 "${MODELS_DIR}/CogVideoX-generate.py" $cmd_args 2>&1 | tee "${LOG_DIR}/cogvideox_${timestamp}.log"
+    python3 "${MODELS_DIR}/CogVideoX-generate.py" "${cmd_args[@]}" 2>&1 | tee "${LOG_DIR}/cogvideox_${timestamp}.log"
 
     deactivate
 
@@ -794,6 +844,9 @@ main() {
     else
         log_success "Ambiente virtual OK!"
     fi
+
+    # Cleanup GPU processes before starting (kills lingering ComfyUI, etc.)
+    cleanup_gpu_processes
 
     echo ""
     log_step "Iniciando geração de vídeo..."

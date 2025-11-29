@@ -48,145 +48,112 @@
         state: present
 
     # ============================================
-    # STEP 2: MOUNT EBS VOLUMES
+    # STEP 2: MOUNT STORAGE (Simplified Architecture)
     # ============================================
+    # Architecture:
+    # - 1x 500GB EBS -> /mnt/models (AI models - persistent)
+    # - Instance Store 3.5TB -> /mnt/output (videos - ephemeral, sync to local)
 
-    # Check if nvme1n1 is being used by LVM (Deep Learning AMI default)
-    - name: Check if models volume is part of LVM
-      shell: pvdisplay /dev/nvme1n1 2>/dev/null || echo "not_lvm"
-      register: lvm_check
+    # Find and mount the 500GB EBS volume
+    - name: Find 500GB EBS volume
+      shell: lsblk -d -n -o NAME,SIZE | grep -E '500G|450G|400G' | grep -v nvme0 | head -1 | awk '{print $1}'
+      register: ebs_volume
       changed_when: false
-      ignore_errors: yes
 
-    - name: Unmount LVM volume if present
-      mount:
-        path: /opt/dlami/nvme
-        state: unmounted
-      when: "'not_lvm' not in lvm_check.stdout"
-      ignore_errors: yes
+    - name: Display detected EBS volume
+      debug:
+        msg: "📦 Detected EBS volume: /dev/{{ ebs_volume.stdout }}"
+      when: ebs_volume.stdout != ""
 
-    - name: Remove LVM logical volume
-      lvol:
-        vg: vg.01
-        lv: lv_ephemeral
-        state: absent
-        force: yes
-      when: "'not_lvm' not in lvm_check.stdout"
-      ignore_errors: yes
-
-    - name: Remove LVM volume group
-      lvg:
-        vg: vg.01
-        state: absent
-      when: "'not_lvm' not in lvm_check.stdout"
-      ignore_errors: yes
-
-    - name: Remove LVM physical volume
-      command: pvremove -ff /dev/nvme1n1
-      when: "'not_lvm' not in lvm_check.stdout"
-      ignore_errors: yes
-
-    - name: Check if models volume is formatted
-      shell: file -s /dev/nvme1n1
-      register: models_volume_check
+    - name: Check if EBS volume is formatted
+      shell: "file -s /dev/{{ ebs_volume.stdout }}"
+      register: ebs_format_check
       changed_when: false
-      ignore_errors: yes
+      when: ebs_volume.stdout != ""
 
-    - name: Format models volume if needed
+    - name: Format EBS volume if needed
       filesystem:
         fstype: ext4
-        dev: /dev/nvme1n1
-        force: yes
-      when: "'ext4' not in models_volume_check.stdout and ': data' in models_volume_check.stdout"
+        dev: "/dev/{{ ebs_volume.stdout }}"
+      when:
+        - ebs_volume.stdout != ""
+        - "': data' in ebs_format_check.stdout"
 
-    - name: Create mount point for models
+    - name: Remove /mnt/models symlink if exists (from old config)
       file:
-        path: "{{ models_dir }}"
+        path: /mnt/models
+        state: absent
+      when: ebs_volume.stdout != ""
+
+    - name: Create mount point /mnt/models
+      file:
+        path: /mnt/models
         state: directory
         owner: ubuntu
         group: ubuntu
         mode: '0755'
 
-    - name: Mount models volume (nvme1n1 - 200GB)
+    - name: Mount EBS volume to /mnt/models
       mount:
-        path: "{{ models_dir }}"
-        src: /dev/nvme1n1
+        path: /mnt/models
+        src: "/dev/{{ ebs_volume.stdout }}"
         fstype: ext4
         opts: defaults,nofail
         state: mounted
+      when: ebs_volume.stdout != ""
 
     - name: Set ownership for models volume
       file:
-        path: "{{ models_dir }}"
+        path: /mnt/models
         owner: ubuntu
         group: ubuntu
-        recurse: yes
+        recurse: no
 
-    - name: Create output directory (on root volume)
-      file:
-        path: "{{ output_dir }}"
-        state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: '0755'
-
-    # ============================================
-    # STEP 2.5: MOUNT ADDITIONAL 500GB EBS VOLUME
-    # ============================================
-    - name: Check if nvme2n1 exists (500GB volume)
+    # Setup output on ephemeral Instance Store
+    - name: Check if Instance Store is available
       stat:
-        path: /dev/nvme2n1
-      register: nvme2n1_exists
+        path: /opt/dlami/nvme
+      register: instance_store
 
-    - name: Check if additional volume is formatted
-      shell: file -s /dev/nvme2n1
-      register: additional_volume_check
-      changed_when: false
-      ignore_errors: yes
-      when: nvme2n1_exists.stat.exists
-
-    - name: Format additional 500GB volume if needed
-      filesystem:
-        fstype: ext4
-        dev: /dev/nvme2n1
-        force: yes
-      when:
-        - nvme2n1_exists.stat.exists
-        - "'ext4' not in additional_volume_check.stdout"
-        - "': data' in additional_volume_check.stdout"
-
-    - name: Create mount point for additional models storage
+    - name: Create output directory on ephemeral storage
       file:
-        path: /mnt/models2
+        path: /opt/dlami/nvme/output
         state: directory
         owner: ubuntu
         group: ubuntu
         mode: '0755'
-      when: nvme2n1_exists.stat.exists
+      when: instance_store.stat.exists
 
-    - name: Mount additional 500GB volume
-      mount:
-        path: /mnt/models2
-        src: /dev/nvme2n1
-        fstype: ext4
-        opts: defaults,nofail
-        state: mounted
-      when: nvme2n1_exists.stat.exists
-
-    - name: Set ownership for additional models volume
+    - name: Remove old /mnt/output if exists
       file:
-        path: /mnt/models2
+        path: /mnt/output
+        state: absent
+      when: instance_store.stat.exists
+
+    - name: Create symlink /mnt/output -> ephemeral storage
+      file:
+        src: /opt/dlami/nvme/output
+        dest: /mnt/output
+        state: link
         owner: ubuntu
         group: ubuntu
-        recurse: yes
-      when: nvme2n1_exists.stat.exists
+      when: instance_store.stat.exists
 
-    - name: Display additional volume status
+    - name: Fallback - Create /mnt/output directory if no ephemeral storage
+      file:
+        path: /mnt/output
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      when: not instance_store.stat.exists
+
+    - name: Display storage status
       debug:
         msg: |
-          📦 Additional Storage:
-          - /mnt/models2 (500GB) - {{ 'Mounted' if nvme2n1_exists.stat.exists else 'Not available' }}
-      when: nvme2n1_exists.stat.exists
+          📦 Storage Configuration:
+          - Models: /mnt/models (500GB EBS)
+          - Output: /mnt/output -> {{ '/opt/dlami/nvme/output (ephemeral)' if instance_store.stat.exists else '/mnt/output (root volume)' }}
 
     # ============================================
     # STEP 3: VERIFY GPU (if present)

@@ -1,7 +1,7 @@
 # Makefile for Video Generation Server Management
 # Centralizes all deployment and management commands
 
-.PHONY: help deploy start start-g5 start-p3dn stop status ssh destroy terraform-plan ansible-only
+.PHONY: help deploy start start-g5 start-p3dn stop status ssh destroy terraform-plan ansible-only mount-volumes
 
 # Default target
 .DEFAULT_GOAL := help
@@ -77,6 +77,7 @@ start-g5: ## Start with g5.12xlarge (4x A10G, 24GB each)
 			aws ec2 wait instance-running --instance-ids $$INSTANCE_ID --region us-east-2 --profile bruno-admin-revalida-aws; \
 		fi && \
 		echo "$(GREEN)✅ g5.12xlarge ready$(NC)"
+	@$(MAKE) mount-volumes
 
 start-p3dn: ## Start with p3dn.24xlarge (8x V100, 32GB each)
 	@echo "$(CYAN)▶️  Starting p3dn.24xlarge...$(NC)"
@@ -104,6 +105,15 @@ start-p3dn: ## Start with p3dn.24xlarge (8x V100, 32GB each)
 			aws ec2 wait instance-running --instance-ids $$INSTANCE_ID --region us-east-2 --profile bruno-admin-revalida-aws; \
 		fi && \
 		echo "$(GREEN)✅ p3dn.24xlarge ready$(NC)"
+	@$(MAKE) mount-volumes
+
+mount-volumes: ## Mount EBS volumes after server start
+	@echo "$(CYAN)📦 Mounting EBS volumes...$(NC)"
+	@sleep 10
+	@cd terraform && \
+		IP=$$(terraform output -raw public_ip 2>/dev/null) && \
+		ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$$IP 'bash -s' < ../ansible/files/mount-ebs.sh && \
+		echo "$(GREEN)✅ EBS volumes mounted$(NC)"
 
 stop: ## Stop the server to save costs
 	@echo "$(YELLOW)⏸  Stopping server...$(NC)"
