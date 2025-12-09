@@ -51,12 +51,12 @@
     # STEP 2: MOUNT STORAGE (Simplified Architecture)
     # ============================================
     # Architecture:
-    # - 1x 500GB EBS -> /mnt/models (AI models - persistent)
+    # - 1x 1500GB EBS -> /mnt/models (AI models - persistent)
     # - Instance Store 3.5TB -> /mnt/output (videos - ephemeral, sync to local)
 
-    # Find and mount the 500GB EBS volume
-    - name: Find 500GB EBS volume
-      shell: lsblk -d -n -o NAME,SIZE | grep -E '500G|450G|400G' | grep -v nvme0 | head -1 | awk '{print $1}'
+    # Find and mount the EBS volume for models (1.5TB / 1500GB)
+    - name: Find EBS volume for models
+      shell: lsblk -d -n -o NAME,SIZE | grep -E '1\.5T|1500G|500G|450G|400G' | grep -v nvme0 | head -1 | awk '{print $1}'
       register: ebs_volume
       changed_when: false
 
@@ -363,6 +363,11 @@
     - name: Include Wan14B Rapid setup tasks
       import_tasks: tasks/setup-wan14b.yml
       tags: [setup-wan14b, never]  # never = only runs when explicitly requested
+
+    # Run with: ansible-playbook playbook.yml --tags setup-hunyuan
+    - name: Include HunyuanVideo-1.5 setup tasks
+      import_tasks: tasks/setup-hunyuan.yml
+      tags: [setup-hunyuan, never]  # never = only runs when explicitly requested
 
 
     # ============================================

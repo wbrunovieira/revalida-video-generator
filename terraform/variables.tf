@@ -93,7 +93,7 @@ variable "root_volume_size" {
 variable "models_volume_size" {
   description = "EBS volume size in GB for AI models"
   type        = number
-  default     = 500 # Ovi ~91GB + Wan 30GB + CogVideoX ~25GB + extras
+  default     = 1500 # HunyuanVideo ~300GB + Ovi ~91GB + Wan ~30GB + CogVideoX ~50GB + extras (~$120/month)
 }
 
 # REMOVED: output_volume_size

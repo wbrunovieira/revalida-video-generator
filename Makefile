@@ -233,6 +233,12 @@ setup-wan14b: ## Setup WAN 14B Rapid (ultra-fast 4 steps, ComfyUI)
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags setup-wan14b
 
+setup-hunyuan: ## Setup HunyuanVideo-1.5 (8.3B parameters, multi-GPU T2V/I2V)
+	@echo "$(CYAN)🎬 Setting up HunyuanVideo-1.5 (8.3B, multi-GPU)...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags setup-hunyuan
+
 download-model: ## Download a specific model (usage: make download-model MODEL=tencent/HunyuanVideo)
 	@if [ -z "$(MODEL)" ]; then \
 		echo "$(RED)Error: MODEL not specified$(NC)"; \

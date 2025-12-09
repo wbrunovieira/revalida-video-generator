@@ -1,0 +1,966 @@
+---
+# Setup HunyuanVideo-1.5 with isolated venv
+# Run with: ansible-playbook playbook.yml --tags setup-hunyuan
+#
+# Creates: /mnt/models/Hunyuan-venv (isolated virtualenv)
+# Used by: generate-video.sh when model=hunyuan
+#
+# Storage: Uses /mnt/models (500GB EBS mounted via mount-ebs.sh)
+#
+# Features:
+# - 8.3B parameters (lightweight yet powerful)
+# - Minimum 14GB VRAM with offloading
+# - Multi-GPU support via torchrun
+# - T2V and I2V support
+# - 480p and 720p resolutions
+# - CFG distilled model for 2x speedup
+# - SageAttention support for faster inference
+# - Super resolution to 1080p
+
+# ============================================
+# MAIN SETUP STARTS HERE
+# ============================================
+- name: Display HunyuanVideo setup banner
+  debug:
+    msg: |
+      ==========================================
+      🎬 SETTING UP HUNYUANVIDEO-1.5
+      ==========================================
+      Features:
+      - 8.3B parameters
+      - T2V + I2V support
+      - 480p/720p resolution (upscale to 1080p)
+      - CFG distilled for 2x speedup
+      - Multi-GPU via torchrun
+      - Min 14GB VRAM with offloading
+      - Isolated venv: {{ models_dir }}/Hunyuan-venv
+      ==========================================
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 1: CREATE ISOLATED HUNYUAN-VENV
+# ============================================
+- name: Check if Hunyuan-venv exists
+  stat:
+    path: "{{ models_dir }}/Hunyuan-venv/bin/activate"
+  register: hunyuan_venv_check
+  tags: [setup-hunyuan]
+
+- name: Remove old Hunyuan-venv if broken
+  file:
+    path: "{{ models_dir }}/Hunyuan-venv"
+    state: absent
+  when: not hunyuan_venv_check.stat.exists
+  tags: [setup-hunyuan]
+
+- name: Create Hunyuan-venv
+  command: python3 -m venv {{ models_dir }}/Hunyuan-venv
+  become_user: ubuntu
+  when: not hunyuan_venv_check.stat.exists
+  tags: [setup-hunyuan]
+
+- name: Display venv status
+  debug:
+    msg: "✅ Hunyuan-venv created: {{ models_dir }}/Hunyuan-venv"
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 2: CLONE HUNYUANVIDEO REPOSITORY
+# ============================================
+- name: Check if HunyuanVideo code repository exists
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/.git"
+  register: hunyuan_repo_check
+  tags: [setup-hunyuan]
+
+- name: Clone HunyuanVideo-1.5 repository
+  git:
+    repo: https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5.git
+    dest: "{{ models_dir }}/HunyuanVideo-1.5"
+    version: main
+    force: yes
+  become_user: ubuntu
+  when: not hunyuan_repo_check.stat.exists
+  tags: [setup-hunyuan]
+
+- name: Display repository status
+  debug:
+    msg: "✅ HunyuanVideo-1.5 code: {{ models_dir }}/HunyuanVideo-1.5"
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 3: INSTALL DEPENDENCIES
+# ============================================
+- name: Upgrade pip, wheel, setuptools in Hunyuan-venv
+  pip:
+    name:
+      - pip
+      - wheel
+      - setuptools
+      - ninja
+      - packaging
+    state: latest
+    virtualenv: "{{ models_dir }}/Hunyuan-venv"
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+
+- name: Install PyTorch 2.5.1 with CUDA 12.4 (required for HunyuanVideo)
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    pip install torch==2.5.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-hunyuan]
+
+- name: Display PyTorch install status
+  debug:
+    msg: "✅ PyTorch 2.5.1+cu124 installed"
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 4: INSTALL FLASH ATTENTION
+# ============================================
+- name: Install Flash Attention 2 for HunyuanVideo
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    pip uninstall flash-attn -y 2>/dev/null || true
+    # Try pre-built wheel first
+    pip install flash-attn --no-build-isolation || \
+    pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp310-cp310-linux_x86_64.whl || \
+    echo "Flash attention install failed - will use fallback attention"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-hunyuan]
+  ignore_errors: yes
+
+- name: Verify flash_attn installation
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    python -c "import flash_attn; print('flash_attn OK')"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  register: flash_attn_verify
+  ignore_errors: yes
+  tags: [setup-hunyuan]
+
+- name: Display flash_attn status
+  debug:
+    msg: "{{ 'flash_attn: Installed ✅' if flash_attn_verify.rc == 0 else 'flash_attn: Not available (will use fallback) ⚠️' }}"
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 5: INSTALL HUNYUANVIDEO REQUIREMENTS
+# ============================================
+- name: Install HunyuanVideo requirements
+  pip:
+    requirements: "{{ models_dir }}/HunyuanVideo-1.5/requirements.txt"
+    virtualenv: "{{ models_dir }}/Hunyuan-venv"
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+  ignore_errors: yes
+
+- name: Install additional HunyuanVideo dependencies
+  pip:
+    name:
+      - einops
+      - omegaconf
+      - imageio
+      - imageio-ffmpeg
+      - diffusers
+      - transformers
+      - accelerate
+      - huggingface-hub
+      - opencv-python
+      - Pillow
+      - numpy
+      - scipy
+      - safetensors
+      - sentencepiece
+      - pyyaml
+    virtualenv: "{{ models_dir }}/Hunyuan-venv"
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+
+- name: Install tencentcloud-sdk-python for prompt enhancement
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    pip install -i https://mirrors.tencent.com/pypi/simple/ --upgrade tencentcloud-sdk-python
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-hunyuan]
+  ignore_errors: yes
+
+- name: Display dependencies status
+  debug:
+    msg: "✅ HunyuanVideo dependencies installed"
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 6: INSTALL SAGEATTN (Optional speedup)
+# ============================================
+- name: Clone SageAttention for faster inference
+  git:
+    repo: https://github.com/cooper1637/SageAttention.git
+    dest: "{{ models_dir }}/SageAttention"
+    version: main
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+  ignore_errors: yes
+
+- name: Install SageAttention
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/SageAttention
+    export EXT_PARALLEL=4 NVCC_APPEND_FLAGS="--threads 8" MAX_JOBS=32
+    python3 setup.py install
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-hunyuan]
+  ignore_errors: yes
+
+- name: Verify SageAttention installation
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    python -c "import sageattention; print('SageAttention OK')"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  register: sage_verify
+  ignore_errors: yes
+  tags: [setup-hunyuan]
+
+- name: Display SageAttention status
+  debug:
+    msg: "{{ 'SageAttention: Installed ✅' if sage_verify.rc == 0 else 'SageAttention: Not available ⚠️' }}"
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 7: DOWNLOAD MODEL CHECKPOINTS
+# ============================================
+- name: Create HunyuanVideo checkpoints directory
+  file:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-hunyuan]
+
+- name: Check if 480P T2V model is downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/hunyuan-video-t2v-720p/transformers/mp_rank_00_model_states.pt"
+  register: hunyuan_t2v_check
+  tags: [setup-hunyuan]
+
+- name: Download HunyuanVideo models using huggingface-cli
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/HunyuanVideo-1.5
+
+    echo "📥 Downloading HunyuanVideo-1.5 models..."
+    echo "   This includes: T2V, I2V, VAE, text encoders, SR models"
+    echo "   Total size: ~50-70GB"
+    echo ""
+
+    # Download main models
+    huggingface-cli download tencent/HunyuanVideo-1.5 \
+      --local-dir ckpts \
+      --local-dir-use-symlinks False \
+      --include "*.pt" "*.safetensors" "*.json" "*.txt" "*.yaml" "*.model" \
+      --exclude "*.bin"
+
+    echo "✅ HunyuanVideo models downloaded!"
+  become_user: ubuntu
+  when: not hunyuan_t2v_check.stat.exists
+  args:
+    executable: /bin/bash
+  async: 7200
+  poll: 60
+  tags: [setup-hunyuan]
+
+- name: Display download status
+  debug:
+    msg: |
+      HunyuanVideo-1.5 models: {{ 'Downloaded ✅' if hunyuan_t2v_check.stat.exists else 'Download attempted' }}
+      Location: {{ models_dir }}/HunyuanVideo-1.5/ckpts/
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 7.5: DOWNLOAD GLYPH-SDXL-V2 TEXT ENCODER
+# Required for byT5 glyph processing in HunyuanVideo
+# ============================================
+- name: Create text_encoder directory
+  file:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-hunyuan]
+
+- name: Check if Glyph-SDXL-v2 is downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/Glyph-SDXL-v2/checkpoints/byt5_model.pt"
+  register: glyph_model_check
+  tags: [setup-hunyuan]
+
+- name: Install ModelScope CLI for Glyph-SDXL-v2 download
+  pip:
+    name: modelscope
+    virtualenv: "{{ models_dir }}/Hunyuan-venv"
+  become_user: ubuntu
+  tags: [setup-hunyuan]
+
+- name: Download Glyph-SDXL-v2 text encoder using ModelScope
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder
+
+    echo "📥 Downloading Glyph-SDXL-v2 text encoder..."
+    echo "   Required for byT5 glyph processing"
+    echo "   Source: ModelScope AI-ModelScope/Glyph-SDXL-v2"
+    echo ""
+
+    # Download from ModelScope (correct source)
+    # ModelScope CLI downloads to correct structure with assets/ and checkpoints/
+    modelscope download --model AI-ModelScope/Glyph-SDXL-v2 --local_dir Glyph-SDXL-v2
+
+    echo ""
+    echo "📂 Checking downloaded files..."
+    ls -la Glyph-SDXL-v2/
+    ls -la Glyph-SDXL-v2/checkpoints/ 2>/dev/null || echo "  (no checkpoints dir yet)"
+    ls -la Glyph-SDXL-v2/assets/ 2>/dev/null || echo "  (no assets dir yet)"
+
+    echo "✅ Glyph-SDXL-v2 downloaded!"
+  become_user: ubuntu
+  when: not glyph_model_check.stat.exists
+  args:
+    executable: /bin/bash
+  async: 1800
+  poll: 30
+  tags: [setup-hunyuan]
+
+- name: Verify Glyph-SDXL-v2 downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/Glyph-SDXL-v2/checkpoints/byt5_model.pt"
+  register: glyph_final_check
+  tags: [setup-hunyuan]
+
+- name: Display Glyph-SDXL-v2 status
+  debug:
+    msg: |
+      Glyph-SDXL-v2 text encoder: {{ 'Downloaded ✅' if glyph_final_check.stat.exists else 'Not found ❌' }}
+      Location: {{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/Glyph-SDXL-v2/
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 7.6: DOWNLOAD BYT5-SMALL TEXT ENCODER
+# Required for HunyuanVideo text encoding
+# ============================================
+- name: Check if byt5-small is downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/byt5-small/pytorch_model.bin"
+  register: byt5_model_check
+  tags: [setup-hunyuan]
+
+- name: Download byt5-small text encoder
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder
+
+    echo "📥 Downloading byt5-small text encoder..."
+    echo "   Required for HunyuanVideo text encoding"
+    echo "   Source: HuggingFace google/byt5-small"
+    echo ""
+
+    huggingface-cli download google/byt5-small \
+      --local-dir byt5-small \
+      --local-dir-use-symlinks False
+
+    echo ""
+    echo "📂 byt5-small files:"
+    ls -la byt5-small/
+    echo "✅ byt5-small downloaded!"
+  become_user: ubuntu
+  when: not byt5_model_check.stat.exists
+  args:
+    executable: /bin/bash
+  async: 1800
+  poll: 30
+  tags: [setup-hunyuan]
+
+- name: Verify byt5-small downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/byt5-small/pytorch_model.bin"
+  register: byt5_final_check
+  tags: [setup-hunyuan]
+
+- name: Display byt5-small status
+  debug:
+    msg: |
+      byt5-small text encoder: {{ 'Downloaded ✅' if byt5_final_check.stat.exists else 'Not found ❌' }}
+      Location: {{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/byt5-small/
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 7.7: DOWNLOAD QWEN2.5-VL-7B TEXT ENCODER
+# Required for HunyuanVideo-1.5 prompt understanding
+# IMPORTANT: HunyuanVideo-1.5 uses Qwen2.5-VL (3584 dims), NOT llava-llama-3-8b (4096 dims)
+# ============================================
+- name: Check if Qwen2.5-VL llm text encoder is downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/llm/model.safetensors"
+  register: llm_model_check
+  tags: [setup-hunyuan]
+
+- name: Remove old llava-llama-3-8b if exists (wrong encoder for v1.5)
+  file:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/llm"
+    state: absent
+  when: not llm_model_check.stat.exists
+  tags: [setup-hunyuan]
+
+- name: Download Qwen2.5-VL-7B-Instruct text encoder
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder
+
+    echo "📥 Downloading Qwen2.5-VL-7B-Instruct text encoder (~16GB)..."
+    echo "   Required for HunyuanVideo-1.5 prompt understanding"
+    echo "   Source: HuggingFace Qwen/Qwen2.5-VL-7B-Instruct"
+    echo "   Note: This is the CORRECT encoder for v1.5 (3584 dims)"
+    echo ""
+
+    # Download Qwen2.5-VL model to llm/ folder
+    huggingface-cli download Qwen/Qwen2.5-VL-7B-Instruct \
+      --local-dir llm \
+      --local-dir-use-symlinks False
+
+    echo ""
+    echo "📂 text_encoder/llm files:"
+    ls -la llm/
+    echo "✅ Qwen2.5-VL-7B text encoder downloaded!"
+  become_user: ubuntu
+  when: not llm_model_check.stat.exists
+  args:
+    executable: /bin/bash
+  async: 7200
+  poll: 60
+  tags: [setup-hunyuan]
+
+- name: Verify Qwen2.5-VL llm text encoder downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/llm/model.safetensors"
+  register: llm_final_check
+  tags: [setup-hunyuan]
+
+- name: Display Qwen2.5-VL text encoder status
+  debug:
+    msg: |
+      Qwen2.5-VL-7B text encoder: {{ 'Downloaded ✅' if llm_final_check.stat.exists else 'Not found ❌' }}
+      Location: {{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder/llm/
+      Note: This provides 3584-dim embeddings for HunyuanVideo-1.5 transformer
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 7.8: DOWNLOAD CLIP TEXT ENCODER
+# Required as text_encoder_2
+# ============================================
+- name: Check if CLIP text encoder is downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder_2"
+  register: clip_model_check
+  tags: [setup-hunyuan]
+
+- name: Download CLIP text encoder
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/HunyuanVideo-1.5/ckpts
+
+    echo "📥 Downloading CLIP text encoder..."
+    echo "   Required for HunyuanVideo as text_encoder_2"
+    echo "   Source: HuggingFace openai/clip-vit-large-patch14"
+    echo ""
+
+    huggingface-cli download openai/clip-vit-large-patch14 \
+      --local-dir text_encoder_2 \
+      --local-dir-use-symlinks False
+
+    echo ""
+    echo "📂 text_encoder_2 files:"
+    ls -la text_encoder_2/
+    echo "✅ CLIP text encoder downloaded!"
+  become_user: ubuntu
+  when: not clip_model_check.stat.exists
+  args:
+    executable: /bin/bash
+  async: 1800
+  poll: 30
+  tags: [setup-hunyuan]
+
+- name: Verify CLIP text encoder downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder_2"
+  register: clip_final_check
+  tags: [setup-hunyuan]
+
+- name: Display CLIP text encoder status
+  debug:
+    msg: |
+      CLIP text encoder: {{ 'Downloaded ✅' if clip_final_check.stat.exists else 'Not found ❌' }}
+      Location: {{ models_dir }}/HunyuanVideo-1.5/ckpts/text_encoder_2/
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 7.9: DOWNLOAD SIGLIP VISION ENCODER (Required for I2V)
+# ============================================
+- name: Create vision_encoder directory
+  file:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-hunyuan]
+
+- name: Check if SigLIP vision encoder is downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/model.safetensors"
+  register: siglip_model_check
+  tags: [setup-hunyuan]
+
+- name: Download SigLIP vision encoder for I2V
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder
+
+    echo "📥 Downloading SigLIP vision encoder..."
+    echo "   Required for HunyuanVideo Image-to-Video (I2V)"
+    echo "   Source: HuggingFace google/siglip-so400m-patch14-384"
+    echo ""
+
+    huggingface-cli download google/siglip-so400m-patch14-384 \
+      --local-dir siglip \
+      --local-dir-use-symlinks False
+
+    echo ""
+    echo "📂 vision_encoder/siglip files:"
+    ls -la siglip/
+    echo "✅ SigLIP vision encoder downloaded!"
+  become_user: ubuntu
+  when: not siglip_model_check.stat.exists
+  args:
+    executable: /bin/bash
+  async: 1800
+  poll: 30
+  tags: [setup-hunyuan]
+
+# IMPORTANT: Extract vision-only weights from SiglipModel
+# The downloaded model.safetensors contains SiglipModel (text+vision) with keys prefixed "vision_model."
+# SiglipVisionModel.from_pretrained() expects keys WITH this prefix (vision_model.embeddings..., etc.)
+# We must extract only vision_model.* keys but KEEP the prefix intact.
+
+# FIX: If old extraction was done incorrectly (removed prefix), re-extract from backup
+- name: Check if SigLIP needs re-extraction (fix old wrong extraction)
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip
+
+    # If backup exists, check if current model.safetensors has correct keys
+    if [ -f "model_full_backup.safetensors" ] && [ -f "model.safetensors" ]; then
+      python3 << 'CHECK_SCRIPT'
+    from safetensors.torch import load_file
+    weights = load_file("model.safetensors")
+    # Check if any key starts with vision_model. (correct) vs embeddings. (wrong)
+    has_correct_prefix = any(k.startswith("vision_model.") for k in weights.keys())
+    has_wrong_prefix = any(k.startswith("embeddings.") or k.startswith("encoder.") for k in weights.keys()) and not has_correct_prefix
+    if has_wrong_prefix:
+        print("NEEDS_FIX")
+    else:
+        print("OK")
+    CHECK_SCRIPT
+    else
+      echo "OK"
+    fi
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  register: siglip_needs_fix
+  changed_when: false
+  ignore_errors: yes
+  tags: [setup-hunyuan]
+
+- name: Fix SigLIP extraction (restore from backup and re-extract)
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip
+
+    echo "🔧 Fixing SigLIP extraction - restoring from backup..."
+    rm -f model.safetensors
+    cp model_full_backup.safetensors model.safetensors
+    rm -f model_full_backup.safetensors
+    echo "✅ Restored original model.safetensors"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  when: siglip_needs_fix.stdout is defined and "NEEDS_FIX" in siglip_needs_fix.stdout
+  tags: [setup-hunyuan]
+
+- name: Check if vision-only model already extracted
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/model_full_backup.safetensors"
+  register: vision_only_check
+  tags: [setup-hunyuan]
+
+- name: Extract vision-only weights from SiglipModel
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    cd {{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip
+
+    python3 << 'EXTRACT_SCRIPT'
+    import os
+    from safetensors.torch import load_file, save_file
+
+    print("Loading full SiglipModel weights...")
+    full_weights = load_file("model.safetensors")
+
+    # Extract only vision_model weights - KEEP the prefix intact!
+    # SiglipVisionModel wraps in self.vision_model, so expects vision_model.* keys
+    vision_weights = {}
+    for key, value in full_weights.items():
+        if key.startswith("vision_model."):
+            # KEEP the prefix - SiglipVisionModel expects vision_model.* keys
+            vision_weights[key] = value
+            print(f"  Extracted: {key}")
+
+    print(f"\nExtracted {len(vision_weights)} vision model tensors (prefix retained)")
+
+    # Save the extracted weights
+    save_file(vision_weights, "model_vision_only.safetensors")
+    print("✅ Saved to model_vision_only.safetensors")
+
+    # Backup original and replace
+    os.rename("model.safetensors", "model_full_backup.safetensors")
+    os.rename("model_vision_only.safetensors", "model.safetensors")
+    print("✅ Replaced model.safetensors with vision-only weights")
+    EXTRACT_SCRIPT
+  become_user: ubuntu
+  when: not vision_only_check.stat.exists
+  args:
+    executable: /bin/bash
+  tags: [setup-hunyuan]
+
+- name: Fix SigLIP config.json for SiglipVisionModel
+  copy:
+    dest: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/config.json"
+    content: |
+      {
+        "architectures": [
+          "SiglipVisionModel"
+        ],
+        "hidden_size": 1152,
+        "image_size": 384,
+        "intermediate_size": 4304,
+        "model_type": "siglip_vision_model",
+        "num_attention_heads": 16,
+        "num_hidden_layers": 27,
+        "patch_size": 14,
+        "torch_dtype": "float32"
+      }
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  tags: [setup-hunyuan]
+
+- name: Display SigLIP extraction status
+  debug:
+    msg: "✅ SigLIP vision-only weights extracted and config.json fixed"
+  tags: [setup-hunyuan]
+
+# IMPORTANT: HunyuanVideo uses subfolder='image_encoder' when loading SigLIP
+# So we need to create siglip/image_encoder/ with the model files
+- name: Create image_encoder subfolder for HunyuanVideo compatibility
+  file:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/image_encoder"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-hunyuan]
+
+- name: Copy model.safetensors to image_encoder subfolder
+  copy:
+    src: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/model.safetensors"
+    dest: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/image_encoder/model.safetensors"
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  tags: [setup-hunyuan]
+
+- name: Copy config.json to image_encoder subfolder
+  copy:
+    src: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/config.json"
+    dest: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/image_encoder/config.json"
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  tags: [setup-hunyuan]
+
+- name: Copy preprocessor_config.json to image_encoder subfolder
+  copy:
+    src: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/preprocessor_config.json"
+    dest: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/image_encoder/preprocessor_config.json"
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  tags: [setup-hunyuan]
+
+- name: Display image_encoder subfolder status
+  debug:
+    msg: "✅ Created siglip/image_encoder/ subfolder for HunyuanVideo compatibility"
+  tags: [setup-hunyuan]
+
+# IMPORTANT: HunyuanVideo uses subfolder='feature_extractor' for SiglipImageProcessor
+# So we also need siglip/feature_extractor/ with preprocessor_config.json
+- name: Create feature_extractor subfolder for SiglipImageProcessor
+  file:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/feature_extractor"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-hunyuan]
+
+- name: Copy preprocessor_config.json to feature_extractor subfolder
+  copy:
+    src: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/preprocessor_config.json"
+    dest: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/feature_extractor/preprocessor_config.json"
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  tags: [setup-hunyuan]
+
+- name: Display feature_extractor subfolder status
+  debug:
+    msg: "✅ Created siglip/feature_extractor/ subfolder for SiglipImageProcessor"
+  tags: [setup-hunyuan]
+
+- name: Verify SigLIP vision encoder downloaded
+  stat:
+    path: "{{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/image_encoder/model.safetensors"
+  register: siglip_final_check
+  tags: [setup-hunyuan]
+
+- name: Display SigLIP vision encoder status
+  debug:
+    msg: |
+      SigLIP vision encoder: {{ 'Downloaded ✅' if siglip_final_check.stat.exists else 'Not found ❌' }}
+      Location: {{ models_dir }}/HunyuanVideo-1.5/ckpts/vision_encoder/siglip/
+      Required for: Image-to-Video (I2V) mode
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 8: CREATE GENERATION SCRIPT
+# ============================================
+- name: Create HunyuanVideo generation script
+  copy:
+    dest: "{{ models_dir }}/HunyuanVideo-generate.py"
+    content: |
+      #!/usr/bin/env python3
+      """
+      HunyuanVideo-1.5 Video Generation Script
+
+      Usage:
+        python HunyuanVideo-generate.py t2v "prompt" [options]
+        python HunyuanVideo-generate.py i2v "prompt" --image path/to/image.png [options]
+
+      Options:
+        --resolution: 480p or 720p (default: 480p)
+        --output: output filename prefix
+        --seed: random seed
+        --steps: inference steps (default: 50)
+        --cfg-distilled: use CFG distilled model for 2x speedup
+        --multi-gpu: use all available GPUs
+        --no-sr: disable super resolution
+      """
+      import os
+      import sys
+      import argparse
+      import subprocess
+      import time
+
+      MODELS_DIR = "{{ models_dir }}"
+      OUTPUT_DIR = "{{ output_dir }}"
+      HUNYUAN_DIR = f"{MODELS_DIR}/HunyuanVideo-1.5"
+      CKPTS_DIR = f"{HUNYUAN_DIR}/ckpts"
+
+      def get_num_gpus():
+          """Detect number of available GPUs"""
+          try:
+              result = subprocess.run(
+                  ["nvidia-smi", "-L"],
+                  capture_output=True,
+                  text=True
+              )
+              return len(result.stdout.strip().split('\n'))
+          except:
+              return 1
+
+      def generate_video(args):
+          """Generate video using HunyuanVideo-1.5"""
+
+          num_gpus = get_num_gpus() if args.multi_gpu else 1
+          seed = args.seed or int(time.time()) % 1000000
+          timestamp = time.strftime("%Y%m%d_%H%M%S")
+          output_name = args.output or f"hunyuan_{args.mode}_{timestamp}"
+          output_path = f"{OUTPUT_DIR}/{output_name}.mp4"
+
+          print(f"🎬 HunyuanVideo-1.5 Generation")
+          print(f"   Mode: {args.mode.upper()}")
+          print(f"   Resolution: {args.resolution}")
+          print(f"   Steps: {args.steps}")
+          print(f"   GPUs: {num_gpus}")
+          print(f"   CFG Distilled: {args.cfg_distilled}")
+          print(f"   Prompt: {args.prompt}")
+          if args.image:
+              print(f"   Image: {args.image}")
+          print()
+
+          # Build command
+          cmd = [
+              "torchrun",
+              f"--nproc_per_node={num_gpus}",
+              "generate.py",
+              "--prompt", args.prompt,
+              "--resolution", args.resolution,
+              "--aspect_ratio", "16:9",
+              "--seed", str(seed),
+              "--output_path", output_path,
+              "--model_path", CKPTS_DIR,
+          ]
+
+          # Add I2V image if provided
+          if args.mode == "i2v" and args.image:
+              cmd.extend(["--image_path", args.image])
+          elif args.mode == "t2v":
+              cmd.extend(["--image_path", "none"])
+
+          # Add options
+          if args.cfg_distilled:
+              cmd.append("--cfg_distilled")
+
+          if args.use_sageattn:
+              cmd.append("--use_sageattn")
+
+          if not args.sr:
+              cmd.extend(["--sr", "false"])
+
+          if args.steps != 50:
+              cmd.extend(["--num_inference_steps", str(args.steps)])
+
+          # Disable prompt rewriting by default (no vLLM server)
+          cmd.extend(["--rewrite", "false"])
+
+          # Run generation
+          print(f"🚀 Starting generation...")
+          print(f"   Command: {' '.join(cmd)}")
+          print()
+
+          env = os.environ.copy()
+          env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(num_gpus))
+
+          result = subprocess.run(
+              cmd,
+              cwd=HUNYUAN_DIR,
+              env=env
+          )
+
+          if result.returncode == 0:
+              print(f"\n✅ Video generated: {output_path}")
+          else:
+              print(f"\n❌ Generation failed with code {result.returncode}")
+
+          return result.returncode
+
+      if __name__ == "__main__":
+          parser = argparse.ArgumentParser(description="HunyuanVideo-1.5 Video Generation")
+          parser.add_argument("mode", choices=["t2v", "i2v"], help="Generation mode")
+          parser.add_argument("prompt", help="Text prompt")
+          parser.add_argument("--image", "-i", help="Image path for I2V mode")
+          parser.add_argument("--resolution", "-r", choices=["480p", "720p"], default="480p")
+          parser.add_argument("--output", "-o", help="Output filename prefix")
+          parser.add_argument("--seed", "-s", type=int, help="Random seed")
+          parser.add_argument("--steps", type=int, default=50, help="Inference steps")
+          parser.add_argument("--cfg-distilled", action="store_true", help="Use CFG distilled model (2x faster)")
+          parser.add_argument("--use-sageattn", action="store_true", help="Use SageAttention")
+          parser.add_argument("--multi-gpu", action="store_true", help="Use all available GPUs")
+          parser.add_argument("--sr", action="store_true", default=True, help="Enable super resolution")
+          parser.add_argument("--no-sr", action="store_false", dest="sr", help="Disable super resolution")
+
+          args = parser.parse_args()
+
+          if args.mode == "i2v" and not args.image:
+              print("❌ I2V mode requires --image parameter")
+              sys.exit(1)
+
+          sys.exit(generate_video(args))
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-hunyuan]
+
+# ============================================
+# STEP 9: VERIFY INSTALLATION
+# ============================================
+- name: Verify HunyuanVideo installation
+  shell: |
+    source {{ models_dir }}/Hunyuan-venv/bin/activate
+    echo "PyTorch: $(python -c 'import torch; print(torch.__version__)')"
+    echo "CUDA: $(python -c 'import torch; print(torch.cuda.is_available())')"
+    echo ""
+    echo "Checkpoints:"
+    ls -lh {{ models_dir }}/HunyuanVideo-1.5/ckpts/ 2>/dev/null | head -10 || echo "  (none yet)"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  register: hunyuan_verify
+  tags: [setup-hunyuan]
+  ignore_errors: yes
+
+- name: Display setup complete
+  debug:
+    msg: |
+      ==========================================
+      ✅ HUNYUANVIDEO-1.5 SETUP COMPLETE
+      ==========================================
+
+      📁 Locations:
+         Venv:    {{ models_dir }}/Hunyuan-venv
+         Code:    {{ models_dir }}/HunyuanVideo-1.5
+         Weights: {{ models_dir }}/HunyuanVideo-1.5/ckpts
+         Script:  {{ models_dir }}/HunyuanVideo-generate.py
+
+      🔍 Installation Check:
+      {{ hunyuan_verify.stdout }}
+
+      🎬 Usage:
+         generate-video hunyuan t2v "Your prompt"
+         generate-video hunyuan i2v "Your prompt" /path/to/image.png
+
+      ⚡ Options:
+         --resolution 720p    Higher quality
+         --cfg-distilled      2x faster inference
+         --multi-gpu          Use all GPUs
+         --no-sr              Disable super resolution
+
+      ==========================================
+  tags: [setup-hunyuan]

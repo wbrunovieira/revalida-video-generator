@@ -3,19 +3,20 @@
 # Called by: make start -> mount-volumes
 #
 # Architecture (simplified):
-# - 1x 500GB EBS -> /mnt/models (AI models - persistent)
+# - 1x 1500GB EBS -> /mnt/models (AI models - persistent)
 # - Instance Store 3.5TB -> /mnt/output (videos - ephemeral, sync to local)
 
 echo "🔍 Detecting storage volumes..."
 
-# Find the 500GB EBS volume (not root, not instance store)
-# EBS volumes are typically nvme1n1 or nvme2n1, around 500GB
-MODELS_VOL=$(lsblk -d -n -o NAME,SIZE | grep -E '500G|450G|400G' | grep -v nvme0 | head -1 | awk '{print $1}')
+# Find the EBS volume for models (1.5TB / 1500GB, or fallback to 500GB)
+# EBS volumes are typically nvme1n1 or nvme2n1
+# Must exclude root (100G/nvme0) and instance store (3.5T)
+MODELS_VOL=$(lsblk -d -n -o NAME,SIZE | grep -E '1\.5T|1500G|500G|450G|400G' | grep -v nvme0 | head -1 | awk '{print $1}')
 
 if [ -z "$MODELS_VOL" ]; then
-    echo "⚠️  No 500GB EBS volume found, trying alternative detection..."
-    # Try to find any EBS volume that's not root and not huge (instance store)
-    MODELS_VOL=$(lsblk -d -n -o NAME,SIZE | grep -E 'nvme[1-3]n1' | grep -vE '[0-9]T' | head -1 | awk '{print $1}')
+    echo "⚠️  No EBS volume found by size, trying alternative detection..."
+    # Try to find the 1.5T volume specifically (not the 3.5T instance store)
+    MODELS_VOL=$(lsblk -d -n -o NAME,SIZE | grep -E 'nvme[1-3]n1' | grep '1\.5T' | head -1 | awk '{print $1}')
 fi
 
 if [ -z "$MODELS_VOL" ]; then
@@ -92,7 +93,7 @@ fi
 
 echo ""
 echo "📊 Storage status:"
-echo "  Models (EBS 500GB):"
+echo "  Models (EBS 1.5TB):"
 df -h /mnt/models 2>/dev/null || echo "    Not mounted"
 echo ""
 echo "  Output (Ephemeral):"

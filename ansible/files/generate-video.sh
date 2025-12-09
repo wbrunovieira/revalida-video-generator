@@ -35,6 +35,7 @@ declare -A MODEL_VENV=(
     ["cogvideox"]="CogVideoX-venv"
     ["wan"]="Wan-venv"
     ["wan14b"]="Wan14B-venv"
+    ["hunyuan"]="Hunyuan-venv"
 )
 
 declare -A MODEL_TORCH=(
@@ -42,6 +43,7 @@ declare -A MODEL_TORCH=(
     ["cogvideox"]="torch torchvision torchaudio"
     ["wan"]="torch torchvision torchaudio"
     ["wan14b"]="torch torchvision torchaudio"
+    ["hunyuan"]="torch==2.5.1 torchvision torchaudio"
 )
 
 declare -A MODEL_CODE_DIR=(
@@ -49,6 +51,7 @@ declare -A MODEL_CODE_DIR=(
     ["cogvideox"]="CogVideoX-5b"
     ["wan"]="Wan2.2"
     ["wan14b"]="ComfyUI"
+    ["hunyuan"]="HunyuanVideo-1.5"
 )
 
 # Ovi model variants
@@ -136,7 +139,8 @@ show_banner() {
     echo "║  Modelos disponíveis:                                         ║"
     echo "║    • ovi       - Video + Audio sincronizado (T2V/I2V)        ║"
     echo "║    • cogvideox - Alta qualidade, multi-GPU (T2V/I2V)         ║"
-    echo "║    • wan14b    - Ultra-rápido 4 steps! (I2V) [NOVO]          ║"
+    echo "║    • wan14b    - Ultra-rápido 4 steps! (I2V)                 ║"
+    echo "║    • hunyuan   - HunyuanVideo 8.3B, multi-GPU (T2V/I2V) [NOVO]║"
     echo "╠═══════════════════════════════════════════════════════════════╣"
     echo "║  GPUs detectadas: ${NUM_GPUS}                                           ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
@@ -178,12 +182,14 @@ interactive_mode() {
     echo -e "${YELLOW}1. Escolha o modelo:${NC}"
     echo "   1) ovi       - Video + Audio sincronizado"
     echo "   2) cogvideox - Alta qualidade"
-    echo "   3) wan14b    - Ultra-rápido (4 steps, I2V apenas) [NOVO]"
+    echo "   3) wan14b    - Ultra-rápido (4 steps, I2V apenas)"
+    echo "   4) hunyuan   - HunyuanVideo 8.3B multi-GPU (T2V/I2V) [NOVO]"
     echo ""
-    read -p "   Modelo [1-3, default=1]: " model_choice
+    read -p "   Modelo [1-4, default=1]: " model_choice
     case "$model_choice" in
         2) MODEL="cogvideox" ;;
         3) MODEL="wan14b" ;;
+        4) MODEL="hunyuan" ;;
         *) MODEL="ovi" ;;
     esac
     echo -e "   ${GREEN}✓ Modelo: ${MODEL}${NC}"
@@ -284,6 +290,66 @@ interactive_mode() {
         echo -e "   ${GREEN}✓ CFG: 1.0, Sampler: euler_a/beta${NC}"
         echo -e "   ${CYAN}Funciona em GPUs com 8GB+ VRAM${NC}"
         echo ""
+    elif [ "$MODEL" == "hunyuan" ]; then
+        # HunyuanVideo - resolução (720p default)
+        MODEL_VARIANT="720p"
+        USE_MULTI_GPU="false"
+
+        # Detect GPU VRAM
+        local gpu_vram=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
+        local total_vram=$((gpu_vram * NUM_GPUS))
+
+        echo -e "${YELLOW}4. Configuração HunyuanVideo-1.5:${NC}"
+        echo "   Resolução:"
+        echo "   1) 480p - Mais rápido, menos VRAM"
+        echo "   2) 720p - Melhor qualidade (recomendado)"
+        echo ""
+        read -p "   Resolução [1-2, default=2]: " res_choice
+        case "$res_choice" in
+            1) MODEL_VARIANT="480p" ;;
+            *) MODEL_VARIANT="720p" ;;
+        esac
+        echo -e "   ${GREEN}✓ Resolução: ${MODEL_VARIANT}${NC}"
+        echo ""
+
+        # Multi-GPU Strategy Selection
+        if [ "$NUM_GPUS" -gt 1 ]; then
+            if [ -n "$gpu_vram" ] && [ "$gpu_vram" -ge 70000 ]; then
+                # Large GPUs (A100/H100 80GB+) - use xDiT torchrun
+                echo "   Multi-GPU:"
+                echo "   1) Não - Single GPU com offloading"
+                echo "   2) Sim - xDiT Multi-GPU via torchrun (mais rápido)"
+                echo ""
+                read -p "   Multi-GPU [1-2, default=2]: " gpu_choice
+                case "$gpu_choice" in
+                    1) USE_MULTI_GPU="false" ;;
+                    *) USE_MULTI_GPU="true" ;;
+                esac
+            elif [ "$total_vram" -ge 80000 ]; then
+                # Multiple smaller GPUs with enough total VRAM (4x A10G = 96GB)
+                # Use device_map to split model across GPUs
+                echo -e "   ${CYAN}GPU: ${gpu_vram:-24000}MB x ${NUM_GPUS} = ${total_vram}MB total${NC}"
+                echo -e "   ${GREEN}✓ Device Map disponível (modelo distribuído entre GPUs)${NC}"
+                echo -e "   ${GREEN}   ~10-15 min em vez de ~3.5h com offloading!${NC}"
+                echo ""
+                echo "   Multi-GPU (device_map):"
+                echo "   1) Não - Single GPU com offloading (LENTO: ~4min/step)"
+                echo "   2) Sim - Device Map entre ${NUM_GPUS} GPUs (RÁPIDO)"
+                echo ""
+                read -p "   Multi-GPU [1-2, default=2]: " gpu_choice
+                case "$gpu_choice" in
+                    1) USE_MULTI_GPU="false" ;;
+                    *) USE_MULTI_GPU="true" ;;
+                esac
+            else
+                # Not enough total VRAM
+                USE_MULTI_GPU="false"
+                echo -e "   ${CYAN}GPU: ${gpu_vram:-24000}MB x ${NUM_GPUS} = ${total_vram}MB${NC}"
+                echo -e "   ${YELLOW}⚠️  VRAM total insuficiente para multi-GPU${NC}"
+                echo -e "   ${GREEN}✓ Usando Single-GPU com CPU offloading${NC}"
+            fi
+            echo ""
+        fi
     elif [ "$MODEL" == "cogvideox" ]; then
         # CogVideoX - perguntar sobre multi-GPU (único que usa device_map)
         MODEL_VARIANT="5b"
@@ -737,6 +803,154 @@ generate_wan14b() {
 }
 
 # =============================================================================
+# Geração de vídeo - HunyuanVideo-1.5
+# =============================================================================
+# Multi-GPU Strategies:
+# 1. torchrun without offloading: Large GPUs (A100/H100 80GB+) - full speed
+# 2. torchrun with offloading: Smaller GPUs (A10G 24GB) - parallelism + offloading
+# 3. Single-GPU + Offloading: Fallback for single GPU setups
+#
+# For g5.12xlarge (4x A10G 24GB):
+# - Use torchrun with 4 GPUs and offloading enabled
+# - Enable cache and optimizations for faster inference
+# - Expected time: ~20-30 min instead of 3+ hours with single GPU
+
+generate_hunyuan() {
+    local mode=$1
+    local prompt=$2
+    local image=$3
+    local use_multi_gpu=$4
+    local model_variant=$5  # 480p or 720p
+
+    local venv_path="${MODELS_DIR}/${MODEL_VENV[hunyuan]}"
+    local code_dir="${MODELS_DIR}/HunyuanVideo-1.5"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local output_file="${OUTPUT_DIR}/hunyuan_${mode}_${timestamp}.mp4"
+
+    source "$venv_path/bin/activate"
+    cd "$code_dir"
+
+    # Detect GPU VRAM (in MB)
+    local gpu_vram=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1 | tr -d ' ')
+    local total_vram=$((gpu_vram * NUM_GPUS))
+
+    log_info "Iniciando HunyuanVideo-1.5..."
+    log_info "Modo: $mode"
+    log_info "Resolução: $model_variant"
+    log_info "GPU VRAM: ${gpu_vram}MB x ${NUM_GPUS} GPUs = ${total_vram}MB total"
+
+    # Set resolution based on variant
+    local resolution="720p"
+    if [ "$model_variant" == "480p" ]; then
+        resolution="480p"
+    fi
+
+    # Determine multi-GPU strategy based on available VRAM
+    # HunyuanVideo needs ~30GB for inference (16GB transformer + 14GB encoders)
+    local use_torchrun="false"
+    local offloading_mode="true"
+    local group_offload="true"
+    local overlap_offload="true"
+    local enable_cache="true"  # Feature cache for faster inference
+    local cfg_distilled="true"  # 2x speedup with distilled model
+
+    if [ "$NUM_GPUS" -gt 1 ]; then
+        if [ -n "$gpu_vram" ] && [ "$gpu_vram" -ge 70000 ]; then
+            # Large GPUs (A100/H100 80GB+) - torchrun without offloading
+            use_torchrun="true"
+            offloading_mode="false"
+            group_offload="false"
+            overlap_offload="false"
+            log_info "Estratégia: Multi-GPU torchrun SEM offloading"
+            log_info "   (GPUs com ${gpu_vram}MB - modelo completo em cada GPU)"
+        elif [ "$NUM_GPUS" -ge 2 ]; then
+            # Multiple smaller GPUs - torchrun WITH offloading
+            # 4x A10G (24GB each) - each GPU does offloading but work is parallelized
+            use_torchrun="true"
+            offloading_mode="true"
+            group_offload="true"
+            overlap_offload="true"
+            log_info "Estratégia: Multi-GPU torchrun COM offloading"
+            log_info "   ${NUM_GPUS} GPUs x ${gpu_vram}MB cada - trabalho paralelizado"
+            log_info "   Cada processo faz offloading, mas mais rápido que single-GPU"
+        fi
+    else
+        log_info "Usando Single-GPU com CPU offloading"
+    fi
+
+    # Set CUDA memory allocation config to prevent fragmentation
+    export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:128"
+
+    if [ "$use_torchrun" == "true" ]; then
+        # Multi-GPU with torchrun
+        log_info "Executando com torchrun (${NUM_GPUS} GPUs)..."
+        log_info "   Offloading: $offloading_mode"
+        log_info "   Group offloading: $group_offload"
+        log_info "   Overlap offloading: $overlap_offload"
+        log_info "   Cache: $enable_cache"
+        log_info "   CFG distilled: $cfg_distilled"
+
+        local -a base_args=(
+            "generate.py"
+            "--prompt" "$prompt"
+            "--resolution" "$resolution"
+            "--model_path" "${code_dir}/ckpts"
+            "--output_path" "$output_file"
+            "--num_inference_steps" "50"
+            "--seed" "$RANDOM"
+            "--rewrite" "false"
+            "--offloading" "$offloading_mode"
+            "--group_offloading" "$group_offload"
+            "--overlap_group_offloading" "$overlap_offload"
+            "--enable_cache" "$enable_cache"
+            "--cfg_distilled" "$cfg_distilled"
+        )
+
+        if [ "$mode" == "i2v" ] && [ -n "$image" ]; then
+            base_args+=("--image_path" "$image")
+        fi
+
+        torchrun --nproc_per_node=${NUM_GPUS} "${base_args[@]}" \
+            2>&1 | tee "${LOG_DIR}/hunyuan_${timestamp}.log"
+
+    else
+        # Single GPU with offloading (fallback)
+        log_info "Executando com Single-GPU + CPU offloading..."
+        log_warn "AVISO: Esta configuração é LENTA (~4 min/step, ~3.5h total)"
+        log_warn "Considere usar --multi-gpu para distribuir entre GPUs"
+
+        local -a base_args=(
+            "generate.py"
+            "--prompt" "$prompt"
+            "--resolution" "$resolution"
+            "--model_path" "${code_dir}/ckpts"
+            "--output_path" "$output_file"
+            "--num_inference_steps" "50"
+            "--seed" "$RANDOM"
+            "--rewrite" "false"
+            "--offloading" "true"
+            "--group_offloading" "true"
+            "--overlap_group_offloading" "true"
+        )
+
+        if [ "$mode" == "i2v" ] && [ -n "$image" ]; then
+            base_args+=("--image_path" "$image")
+        fi
+
+        python3 "${base_args[@]}" \
+            2>&1 | tee "${LOG_DIR}/hunyuan_${timestamp}.log"
+    fi
+
+    deactivate
+
+    echo ""
+    log_success "Geração concluída!"
+    echo ""
+    log_info "Últimos vídeos gerados:"
+    ls -lht "${OUTPUT_DIR}"/hunyuan*.mp4 2>/dev/null | head -5
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -805,7 +1019,7 @@ main() {
             exit 1
         fi
 
-        if [[ ! " ovi cogvideox wan wan14b " =~ " $model " ]]; then
+        if [[ ! " ovi cogvideox wan wan14b hunyuan " =~ " $model " ]]; then
             log_error "Modelo inválido: $model"
             exit 1
         fi
@@ -864,6 +1078,9 @@ main() {
             ;;
         wan14b)
             generate_wan14b "$mode" "$prompt" "$image"
+            ;;
+        hunyuan)
+            generate_hunyuan "$mode" "$prompt" "$image" "$use_multi_gpu" "$model_variant"
             ;;
     esac
 }
