@@ -36,6 +36,8 @@ declare -A MODEL_VENV=(
     ["wan"]="Wan-venv"
     ["wan14b"]="Wan14B-venv"
     ["hunyuan"]="Hunyuan-venv"
+    ["skyreels"]="SkyReels-venv"
+    ["chatterbox"]="Chatterbox-venv"
 )
 
 declare -A MODEL_TORCH=(
@@ -44,6 +46,8 @@ declare -A MODEL_TORCH=(
     ["wan"]="torch torchvision torchaudio"
     ["wan14b"]="torch torchvision torchaudio"
     ["hunyuan"]="torch==2.5.1 torchvision torchaudio"
+    ["skyreels"]="torch==2.5.1 torchvision torchaudio"
+    ["chatterbox"]="torch torchaudio"
 )
 
 declare -A MODEL_CODE_DIR=(
@@ -52,6 +56,8 @@ declare -A MODEL_CODE_DIR=(
     ["wan"]="Wan2.2"
     ["wan14b"]="ComfyUI"
     ["hunyuan"]="HunyuanVideo-1.5"
+    ["skyreels"]="SkyReels-V2"
+    ["chatterbox"]="Chatterbox-voices"
 )
 
 # Ovi model variants
@@ -137,10 +143,11 @@ show_banner() {
     echo "║          🎬 Video Generation - Revalida Italia 🎬             ║"
     echo "╠═══════════════════════════════════════════════════════════════╣"
     echo "║  Modelos disponíveis:                                         ║"
-    echo "║    • ovi       - Video + Audio sincronizado (T2V/I2V)        ║"
-    echo "║    • cogvideox - Alta qualidade, multi-GPU (T2V/I2V)         ║"
-    echo "║    • wan14b    - Ultra-rápido 4 steps! (I2V)                 ║"
-    echo "║    • hunyuan   - HunyuanVideo 8.3B, multi-GPU (T2V/I2V) [NOVO]║"
+    echo "║    • ovi        - Video + Audio sincronizado (T2V/I2V)       ║"
+    echo "║    • cogvideox  - Alta qualidade, multi-GPU (T2V/I2V)        ║"
+    echo "║    • wan14b     - Ultra-rápido 4 steps! (I2V)                ║"
+    echo "║    • hunyuan    - HunyuanVideo 8.3B, multi-GPU (T2V/I2V)     ║"
+    echo "║    • chatterbox - TTS natural, italiano (TTS)                 ║"
     echo "╠═══════════════════════════════════════════════════════════════╣"
     echo "║  GPUs detectadas: ${NUM_GPUS}                                           ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
@@ -180,24 +187,33 @@ interactive_mode() {
 
     # 1. Escolher modelo
     echo -e "${YELLOW}1. Escolha o modelo:${NC}"
-    echo "   1) ovi       - Video + Audio sincronizado"
-    echo "   2) cogvideox - Alta qualidade"
-    echo "   3) wan14b    - Ultra-rápido (4 steps, I2V apenas)"
-    echo "   4) hunyuan   - HunyuanVideo 8.3B multi-GPU (T2V/I2V) [NOVO]"
+    echo "   1) ovi        - Video + Audio sincronizado"
+    echo "   2) cogvideox  - Alta qualidade"
+    echo "   3) wan14b     - Ultra-rápido (4 steps, I2V apenas)"
+    echo "   4) hunyuan    - HunyuanVideo 8.3B multi-GPU (T2V/I2V)"
+    echo "   5) chatterbox - TTS natural, italiano"
     echo ""
-    read -p "   Modelo [1-4, default=1]: " model_choice
+    read -p "   Modelo [1-5, default=1]: " model_choice
     case "$model_choice" in
         2) MODEL="cogvideox" ;;
         3) MODEL="wan14b" ;;
         4) MODEL="hunyuan" ;;
+        5) MODEL="chatterbox" ;;
         *) MODEL="ovi" ;;
     esac
     echo -e "   ${GREEN}✓ Modelo: ${MODEL}${NC}"
     echo ""
 
-    # 2. Escolher modo (T2V ou I2V)
+    # 2. Escolher modo (T2V ou I2V ou TTS)
     # wan14b só suporta I2V por enquanto (T2V precisa de custom nodes não instalados)
-    if [ "$MODEL" == "wan14b" ]; then
+    # chatterbox e f5tts são TTS (Text-to-Speech)
+    if [ "$MODEL" == "chatterbox" ]; then
+        MODE="tts"
+        echo -e "${YELLOW}2. Modo de geração:${NC}"
+        echo -e "   ${CYAN}Chatterbox - TTS natural, italiano${NC}"
+        echo -e "   ${GREEN}✓ Modo: tts (automático)${NC}"
+        echo ""
+    elif [ "$MODEL" == "wan14b" ]; then
         MODE="i2v"
         echo -e "${YELLOW}2. Modo de geração:${NC}"
         echo -e "   ${CYAN}WAN14B atualmente suporta apenas I2V (Image to Video)${NC}"
@@ -217,8 +233,9 @@ interactive_mode() {
         echo ""
     fi
 
-    # 3. Se I2V, pedir imagem
+    # 3. Se I2V, pedir imagem. Se TTS, pedir voz de referência (opcional)
     IMAGE=""
+    VOICE_REF=""
     if [ "$MODE" == "i2v" ]; then
         echo -e "${YELLOW}3. Caminho da imagem:${NC}"
         echo "   (Ex: /mnt/output/doctor.png)"
@@ -230,13 +247,47 @@ interactive_mode() {
         fi
         echo -e "   ${GREEN}✓ Imagem: ${IMAGE}${NC}"
         echo ""
+    elif [ "$MODE" == "tts" ]; then
+        echo -e "${YELLOW}3. Voz de referência (opcional):${NC}"
+        echo "   Deixe em branco para usar voz padrão"
+        echo "   (Ex: /mnt/models/Chatterbox-voices/dottore.wav)"
+        echo ""
+        read -p "   Voz [Enter para padrão]: " VOICE_REF
+        if [ -n "$VOICE_REF" ] && [ ! -f "$VOICE_REF" ]; then
+            log_warn "Arquivo de voz não encontrado: $VOICE_REF"
+            log_warn "Usando voz padrão..."
+            VOICE_REF=""
+        fi
+        [ -n "$VOICE_REF" ] && echo -e "   ${GREEN}✓ Voz: ${VOICE_REF}${NC}"
+        [ -z "$VOICE_REF" ] && echo -e "   ${GREEN}✓ Usando voz padrão${NC}"
+        echo ""
     fi
 
-    # 4. Escolher variante (apenas para Ovi)
+    # 4. Escolher variante (apenas para Ovi) ou config TTS (Chatterbox)
     MODEL_VARIANT="720x720_5s"
     USE_MULTI_GPU="false"
+    TTS_EXAGGERATION="0.5"
 
-    if [ "$MODEL" == "ovi" ]; then
+    if [ "$MODEL" == "chatterbox" ]; then
+        # Chatterbox TTS configuration
+        MODEL_VARIANT="tts"
+        USE_MULTI_GPU="false"
+        echo -e "${YELLOW}4. Configuração de emoção (Chatterbox):${NC}"
+        echo "   1) Neutro (0.3)     - Tom calmo e profissional"
+        echo "   2) Normal (0.5)     - Expressão natural [recomendado]"
+        echo "   3) Expressivo (0.7) - Mais ênfase emocional"
+        echo "   4) Dramático (0.9)  - Alta expressividade"
+        echo ""
+        read -p "   Emoção [1-4, default=2]: " emotion_choice
+        case "$emotion_choice" in
+            1) TTS_EXAGGERATION="0.3" ;;
+            3) TTS_EXAGGERATION="0.7" ;;
+            4) TTS_EXAGGERATION="0.9" ;;
+            *) TTS_EXAGGERATION="0.5" ;;
+        esac
+        echo -e "   ${GREEN}✓ Exaggeration: ${TTS_EXAGGERATION}${NC}"
+        echo ""
+    elif [ "$MODEL" == "ovi" ]; then
         # Detectar VRAM da GPU
         local gpu_vram=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
 
@@ -385,36 +436,51 @@ interactive_mode() {
     echo -e "${MAGENTA}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
 
-    # 6. Descrição visual da cena
-    echo -e "${YELLOW}6. Descreva a CENA (visual):${NC}"
-    echo "   O que aparece no vídeo? Descreva a pessoa, ambiente, iluminação..."
-    echo ""
-    echo -e "   ${CYAN}Exemplo: Italian doctor in white coat, warm smile, professional${NC}"
-    echo -e "   ${CYAN}         office background, soft lighting${NC}"
-    echo ""
-    read -p "   Cena: " SCENE_DESC
-    echo ""
+    if [ "$MODEL" == "chatterbox" ]; then
+        # TTS - apenas texto para falar
+        echo -e "${YELLOW}5. Texto para converter em áudio:${NC}"
+        echo ""
+        echo -e "   ${CYAN}Exemplo: Buongiorno! Sono il Dottor Rossi. Oggi parleremo di cardiologia.${NC}"
+        echo ""
+        read -p "   Texto: " TTS_TEXT
+        echo ""
 
-    # 7. Fala (opcional)
-    echo -e "${YELLOW}7. O que a pessoa VAI FALAR? (opcional):${NC}"
-    echo "   Deixe em branco se não houver fala"
-    echo ""
-    echo -e "   ${CYAN}Exemplo: Buongiorno, benvenuti al corso di italiano medico${NC}"
-    echo ""
-    read -p "   Fala: " SPEECH_TEXT
-    echo ""
+        FINAL_PROMPT="$TTS_TEXT"
+        SCENE_DESC=""
+        SPEECH_TEXT=""
+        AUDIO_DESC=""
+    else
+        # 6. Descrição visual da cena
+        echo -e "${YELLOW}6. Descreva a CENA (visual):${NC}"
+        echo "   O que aparece no vídeo? Descreva a pessoa, ambiente, iluminação..."
+        echo ""
+        echo -e "   ${CYAN}Exemplo: Italian doctor in white coat, warm smile, professional${NC}"
+        echo -e "   ${CYAN}         office background, soft lighting${NC}"
+        echo ""
+        read -p "   Cena: " SCENE_DESC
+        echo ""
 
-    # 8. Descrição do áudio/música de fundo
-    echo -e "${YELLOW}8. Descreva o ÁUDIO de fundo (opcional):${NC}"
-    echo "   Música, sons ambiente, etc."
-    echo ""
-    echo -e "   ${CYAN}Exemplo: Soft piano music, hospital ambiance${NC}"
-    echo ""
-    read -p "   Áudio: " AUDIO_DESC
-    echo ""
+        # 7. Fala (opcional)
+        echo -e "${YELLOW}7. O que a pessoa VAI FALAR? (opcional):${NC}"
+        echo "   Deixe em branco se não houver fala"
+        echo ""
+        echo -e "   ${CYAN}Exemplo: Buongiorno, benvenuti al corso di italiano medico${NC}"
+        echo ""
+        read -p "   Fala: " SPEECH_TEXT
+        echo ""
 
-    # Montar prompt final
-    FINAL_PROMPT=$(build_ovi_prompt "$SCENE_DESC" "$SPEECH_TEXT" "$AUDIO_DESC" "$MODEL_VARIANT")
+        # 8. Descrição do áudio/música de fundo
+        echo -e "${YELLOW}8. Descreva o ÁUDIO de fundo (opcional):${NC}"
+        echo "   Música, sons ambiente, etc."
+        echo ""
+        echo -e "   ${CYAN}Exemplo: Soft piano music, hospital ambiance${NC}"
+        echo ""
+        read -p "   Áudio: " AUDIO_DESC
+        echo ""
+
+        # Montar prompt final
+        FINAL_PROMPT=$(build_ovi_prompt "$SCENE_DESC" "$SPEECH_TEXT" "$AUDIO_DESC" "$MODEL_VARIANT")
+    fi
 
     echo -e "${MAGENTA}═══════════════════════════════════════════════════════════════${NC}"
     echo -e "${MAGENTA}                    RESUMO DA GERAÇÃO                          ${NC}"
@@ -423,10 +489,12 @@ interactive_mode() {
     echo -e "${GREEN}Modelo:${NC}      $MODEL"
     echo -e "${GREEN}Modo:${NC}        $MODE"
     [ -n "$IMAGE" ] && echo -e "${GREEN}Imagem:${NC}      $IMAGE"
-    echo -e "${GREEN}Qualidade:${NC}   $MODEL_VARIANT"
-    echo -e "${GREEN}Multi-GPU:${NC}   $USE_MULTI_GPU"
+    [ -n "$VOICE_REF" ] && echo -e "${GREEN}Voz:${NC}         $VOICE_REF"
+    [ "$MODEL" == "chatterbox" ] && echo -e "${GREEN}Emoção:${NC}      $TTS_EXAGGERATION"
+    [ "$MODEL" != "chatterbox" ] && echo -e "${GREEN}Qualidade:${NC}   $MODEL_VARIANT"
+    [ "$MODEL" != "chatterbox" ] && echo -e "${GREEN}Multi-GPU:${NC}   $USE_MULTI_GPU"
     echo ""
-    echo -e "${GREEN}Prompt final:${NC}"
+    echo -e "${GREEN}Prompt/Texto:${NC}"
     echo -e "${CYAN}$FINAL_PROMPT${NC}"
     echo ""
 
@@ -443,6 +511,8 @@ interactive_mode() {
     export INTERACTIVE_IMAGE="$IMAGE"
     export INTERACTIVE_VARIANT="$MODEL_VARIANT"
     export INTERACTIVE_MULTI_GPU="$USE_MULTI_GPU"
+    export INTERACTIVE_VOICE_REF="$VOICE_REF"
+    export INTERACTIVE_TTS_EXAGGERATION="$TTS_EXAGGERATION"
 }
 
 # =============================================================================
@@ -951,6 +1021,148 @@ generate_hunyuan() {
 }
 
 # =============================================================================
+# SkyReels-V2 - SOTA Image-to-Video (14B params, 720P output)
+# =============================================================================
+# SkyReels-V2 is the FIRST open-source video generative model using
+# AutoRegressive Diffusion-Forcing architecture achieving SOTA performance
+# - 14B parameters, 720P output (720x1280, 121 frames ~5s)
+# - Multi-GPU support via xDiT USP (torchrun --nproc_per_node=N --use_usp)
+# - Supports I2V (image-to-video) and T2V (text-to-video)
+# - Achieves SOTA on VBench benchmark (83.9% total score)
+# =============================================================================
+generate_skyreels() {
+    local mode=$1
+    local prompt=$2
+    local image=$3
+    local use_multi_gpu=$4
+
+    local venv_path="${MODELS_DIR}/${MODEL_VENV[skyreels]}"
+    local code_dir="${MODELS_DIR}/SkyReels-V2"
+    local model_dir="${MODELS_DIR}/SkyReels-V2-I2V-14B-720P"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local output_file="${OUTPUT_DIR}/skyreels_${mode}_${timestamp}.mp4"
+
+    source "$venv_path/bin/activate"
+    cd "$code_dir"
+
+    log_info "Iniciando SkyReels-V2 I2V 14B..."
+    log_info "Modelo: SkyReels-V2-I2V-14B-720P (SOTA 83.9% VBench)"
+    log_info "Resolução: 720P (720x1280, 121 frames ~5s)"
+
+    # Use local model path if available, otherwise use HF model ID
+    local model_id="$model_dir"
+    if [ ! -d "$model_dir" ]; then
+        log_warn "Modelo local não encontrado, usando HuggingFace..."
+        model_id="Skywork/SkyReels-V2-I2V-14B-720P"
+    fi
+
+    # Build base arguments (SkyReels uses --outdir for output directory)
+    local -a base_args=(
+        "generate_video.py"
+        "--model_id" "$model_id"
+        "--resolution" "720P"
+        "--num_frames" "121"
+        "--guidance_scale" "5.0"
+        "--shift" "3.0"
+        "--fps" "24"
+        "--seed" "$RANDOM"
+        "--prompt" "$prompt"
+        "--outdir" "${OUTPUT_DIR}"
+    )
+
+    # Add image for I2V mode
+    if [ "$mode" == "i2v" ] && [ -n "$image" ]; then
+        base_args+=("--image" "$image")
+        log_info "Modo: Image-to-Video"
+        log_info "Imagem: $image"
+    else
+        log_info "Modo: Text-to-Video"
+    fi
+
+    # Multi-GPU with xDiT USP (Unified Sequence Parallel)
+    if [ "$use_multi_gpu" == "true" ] && [ "$NUM_GPUS" -gt 1 ]; then
+        log_info "Multi-GPU: ${NUM_GPUS} GPUs com xDiT USP + offload"
+        base_args+=("--use_usp" "--offload")
+
+        torchrun --nproc_per_node=${NUM_GPUS} "${base_args[@]}" \
+            2>&1 | tee "${LOG_DIR}/skyreels_${timestamp}.log"
+    else
+        # Single GPU with offloading
+        log_info "Single-GPU: Com CPU offloading"
+        base_args+=("--offload")
+
+        python3 "${base_args[@]}" \
+            2>&1 | tee "${LOG_DIR}/skyreels_${timestamp}.log"
+    fi
+
+    deactivate
+
+    echo ""
+    log_success "Geração concluída!"
+    echo ""
+    log_info "Últimos vídeos gerados:"
+    ls -lht "${OUTPUT_DIR}"/skyreels*.mp4 2>/dev/null | head -5
+}
+
+# =============================================================================
+# Chatterbox TTS - Natural Italian Voice Generation
+# =============================================================================
+# Chatterbox is a production-ready TTS model that:
+# - Beats ElevenLabs in blind tests (63.8% preference)
+# - Supports 23 languages including Italian
+# - Zero-shot voice cloning (5-10s reference audio)
+# - Emotion control (exaggeration parameter)
+# - MIT license (commercial use OK)
+# =============================================================================
+generate_chatterbox() {
+    local mode=$1  # Always "tts" for chatterbox
+    local text=$2
+    local voice_ref=$3
+    local exaggeration=$4
+
+    local venv_path="${MODELS_DIR}/${MODEL_VENV[chatterbox]}"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local output_file="${OUTPUT_DIR}/chatterbox_${timestamp}.wav"
+
+    source "$venv_path/bin/activate"
+
+    log_info "Iniciando Chatterbox TTS..."
+    log_info "Idioma: Italiano (it)"
+    log_info "Exaggeration: ${exaggeration:-0.5}"
+    log_info "Texto: ${text:0:80}..."
+    [ -n "$voice_ref" ] && log_info "Voz de referência: $voice_ref"
+
+    # Build command arguments
+    local -a cmd_args=(
+        "${MODELS_DIR}/Chatterbox-generate.py"
+        "$text"
+        "--output" "$output_file"
+        "--language" "it"
+        "--exaggeration" "${exaggeration:-0.5}"
+    )
+
+    # Add voice reference if provided
+    if [ -n "$voice_ref" ] && [ -f "$voice_ref" ]; then
+        cmd_args+=("--voice" "$voice_ref")
+    fi
+
+    # Run generation
+    python3 "${cmd_args[@]}" 2>&1 | tee "${LOG_DIR}/chatterbox_${timestamp}.log"
+
+    deactivate
+
+    echo ""
+    log_success "Geração de áudio concluída!"
+    echo ""
+    log_info "Arquivo gerado:"
+    ls -lh "$output_file" 2>/dev/null
+
+    echo ""
+    log_info "Últimos áudios gerados:"
+    ls -lht "${OUTPUT_DIR}"/chatterbox*.wav 2>/dev/null | head -5
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -976,6 +1188,8 @@ main() {
         local image="$INTERACTIVE_IMAGE"
         local model_variant="$INTERACTIVE_VARIANT"
         local use_multi_gpu="$INTERACTIVE_MULTI_GPU"
+        local voice_ref="$INTERACTIVE_VOICE_REF"
+        local tts_exaggeration="$INTERACTIVE_TTS_EXAGGERATION"
     else
         # Modo direto (parse de argumentos)
         local model=""
@@ -984,6 +1198,8 @@ main() {
         local image=""
         local use_multi_gpu="false"
         local model_variant="${OVI_MODEL_VARIANT}"
+        local voice_ref=""
+        local tts_exaggeration="0.5"
 
         while [[ $# -gt 0 ]]; do
             case $1 in
@@ -993,6 +1209,14 @@ main() {
                     ;;
                 --model-variant=*)
                     model_variant="${1#*=}"
+                    shift
+                    ;;
+                --voice=*)
+                    voice_ref="${1#*=}"
+                    shift
+                    ;;
+                --exaggeration=*)
+                    tts_exaggeration="${1#*=}"
                     shift
                     ;;
                 -h|--help)
@@ -1019,12 +1243,12 @@ main() {
             exit 1
         fi
 
-        if [[ ! " ovi cogvideox wan wan14b hunyuan " =~ " $model " ]]; then
+        if [[ ! " ovi cogvideox wan wan14b hunyuan skyreels chatterbox " =~ " $model " ]]; then
             log_error "Modelo inválido: $model"
             exit 1
         fi
 
-        if [[ ! " t2v i2v " =~ " $mode " ]]; then
+        if [[ ! " t2v i2v tts " =~ " $mode " ]]; then
             log_error "Modo inválido: $mode"
             exit 1
         fi
@@ -1032,6 +1256,12 @@ main() {
         if [ "$mode" == "i2v" ] && [ -z "$image" ]; then
             log_error "Modo i2v requer uma imagem"
             exit 1
+        fi
+
+        # Chatterbox requires tts mode
+        if [ "$model" == "chatterbox" ] && [ "$mode" != "tts" ]; then
+            log_warn "Chatterbox só suporta modo TTS. Ajustando..."
+            mode="tts"
         fi
 
         show_banner
@@ -1042,6 +1272,8 @@ main() {
     log_info "Modo: $mode"
     log_info "Prompt: $prompt"
     [ -n "$image" ] && log_info "Imagem: $image"
+    [ -n "$voice_ref" ] && log_info "Voz: $voice_ref"
+    [ "$model" == "chatterbox" ] && log_info "Exaggeration: $tts_exaggeration"
     [ "$model" == "ovi" ] && log_info "Variant: $model_variant"
     [ "$use_multi_gpu" == "true" ] && log_info "Multi-GPU: Sim (${NUM_GPUS} GPUs)"
     echo ""
@@ -1063,7 +1295,11 @@ main() {
     cleanup_gpu_processes
 
     echo ""
-    log_step "Iniciando geração de vídeo..."
+    if [ "$model" == "chatterbox" ]; then
+        log_step "Iniciando geração de áudio..."
+    else
+        log_step "Iniciando geração de vídeo..."
+    fi
     echo ""
 
     case $model in
@@ -1081,6 +1317,12 @@ main() {
             ;;
         hunyuan)
             generate_hunyuan "$mode" "$prompt" "$image" "$use_multi_gpu" "$model_variant"
+            ;;
+        skyreels)
+            generate_skyreels "$mode" "$prompt" "$image" "$use_multi_gpu"
+            ;;
+        chatterbox)
+            generate_chatterbox "$mode" "$prompt" "$voice_ref" "$tts_exaggeration"
             ;;
     esac
 }

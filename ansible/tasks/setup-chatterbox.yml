@@ -1,0 +1,511 @@
+---
+# Setup Better-Chatterbox TTS (Text-to-Speech) with isolated venv
+# Run with: ansible-playbook playbook.yml --tags setup-chatterbox
+#
+# Creates: /mnt/models/Chatterbox-venv (isolated virtualenv)
+# Used by: generate-video.sh when model=chatterbox (for TTS/audio generation)
+#
+# Uses better-chatterbox (fork with short text fix):
+# - Fixes known bug with short text/single words (GitHub Issue #201)
+# - Beats ElevenLabs in blind tests (63.8% preference)
+# - Supports 23 languages including Italian
+# - Voice cloning with 5-10 seconds of reference audio
+# - Emotion control (monotone to dramatic)
+# - MIT license (commercial use OK)
+# - Best for: longer text (use F5-TTS for short words)
+#
+# Storage: Uses /mnt/models (500GB EBS mounted via mount-ebs.sh)
+
+# ============================================
+# MAIN SETUP STARTS HERE
+# ============================================
+- name: Display Chatterbox setup banner
+  debug:
+    msg: |
+      ==========================================
+      🎙️ SETTING UP BETTER-CHATTERBOX TTS
+      ==========================================
+      Features:
+      - 0.5B Llama backbone (500M parameters)
+      - 23 languages (including Italian!)
+      - Zero-shot voice cloning (5-10s audio)
+      - Emotion exaggeration control
+      - Sub-200ms latency
+      - MIT License (commercial OK)
+      - Fork: better-chatterbox (short text fix)
+      - Isolated venv: {{ models_dir }}/Chatterbox-venv
+      ==========================================
+  tags: [setup-chatterbox]
+
+# ============================================
+# STEP 1: CREATE ISOLATED CHATTERBOX-VENV
+# ============================================
+- name: Check if Chatterbox-venv exists
+  stat:
+    path: "{{ models_dir }}/Chatterbox-venv/bin/activate"
+  register: chatterbox_venv_check
+  tags: [setup-chatterbox]
+
+- name: Remove old Chatterbox-venv if broken
+  file:
+    path: "{{ models_dir }}/Chatterbox-venv"
+    state: absent
+  when: not chatterbox_venv_check.stat.exists
+  tags: [setup-chatterbox]
+
+- name: Create Chatterbox-venv
+  command: python3 -m venv {{ models_dir }}/Chatterbox-venv
+  become_user: ubuntu
+  when: not chatterbox_venv_check.stat.exists
+  tags: [setup-chatterbox]
+
+- name: Display venv status
+  debug:
+    msg: "✅ Chatterbox-venv created: {{ models_dir }}/Chatterbox-venv"
+  tags: [setup-chatterbox]
+
+# ============================================
+# STEP 2: INSTALL DEPENDENCIES (PyTorch 2.1+)
+# ============================================
+- name: Upgrade pip, wheel, setuptools in Chatterbox-venv
+  pip:
+    name:
+      - pip
+      - wheel
+      - setuptools
+    state: latest
+    virtualenv: "{{ models_dir }}/Chatterbox-venv"
+  become_user: ubuntu
+  tags: [setup-chatterbox]
+
+- name: Install PyTorch with CUDA 12.1
+  shell: |
+    source {{ models_dir }}/Chatterbox-venv/bin/activate
+    export PIP_CACHE_DIR={{ models_dir }}/.pip-cache
+    export TMPDIR={{ models_dir }}/.tmp
+    mkdir -p $PIP_CACHE_DIR $TMPDIR
+    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-chatterbox]
+
+- name: Display PyTorch install status
+  debug:
+    msg: "✅ PyTorch+cu121 installed"
+  tags: [setup-chatterbox]
+
+# ============================================
+# STEP 3: INSTALL CHATTERBOX
+# ============================================
+- name: Install Better-Chatterbox TTS (fork with short text fix)
+  shell: |
+    source {{ models_dir }}/Chatterbox-venv/bin/activate
+    export PIP_CACHE_DIR={{ models_dir }}/.pip-cache
+    export TMPDIR={{ models_dir }}/.tmp
+    export HF_HOME={{ models_dir }}/huggingface
+    mkdir -p $PIP_CACHE_DIR $TMPDIR $HF_HOME
+    pip install better-chatterbox
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  tags: [setup-chatterbox]
+
+- name: Install additional dependencies
+  pip:
+    name:
+      - soundfile
+      - librosa
+      - scipy
+      - numpy
+      - huggingface-hub
+    virtualenv: "{{ models_dir }}/Chatterbox-venv"
+  become_user: ubuntu
+  tags: [setup-chatterbox]
+
+- name: Display dependencies status
+  debug:
+    msg: "✅ Chatterbox TTS and dependencies installed"
+  tags: [setup-chatterbox]
+
+# ============================================
+# STEP 4: DOWNLOAD MODEL (automatic on first use)
+# ============================================
+- name: Create model download script
+  copy:
+    dest: "{{ models_dir }}/download_chatterbox.py"
+    content: |
+      import os
+      os.environ['HF_HOME'] = '/mnt/models/huggingface'
+      print("📥 Pre-downloading Chatterbox model...")
+      from chatterbox import ChatterboxTTS
+      model = ChatterboxTTS.from_pretrained(device="cpu")
+      print("✅ Chatterbox model downloaded!")
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-chatterbox]
+
+- name: Pre-download Chatterbox model
+  shell: |
+    source {{ models_dir }}/Chatterbox-venv/bin/activate
+    python3 {{ models_dir }}/download_chatterbox.py
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  async: 1800
+  poll: 30
+  tags: [setup-chatterbox]
+  ignore_errors: yes
+
+# ============================================
+# STEP 5: CREATE VOICE LIBRARY DIRECTORY
+# ============================================
+- name: Create voice library directory
+  file:
+    path: "{{ models_dir }}/Chatterbox-voices"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-chatterbox]
+
+- name: Create example voice library config
+  copy:
+    dest: "{{ models_dir }}/Chatterbox-voices/voices.json"
+    content: |
+      {
+        "voices": {
+          "dottore": {
+            "description": "Male Italian doctor voice",
+            "sample": "dottore.wav",
+            "language": "it"
+          },
+          "dottoressa": {
+            "description": "Female Italian doctor voice",
+            "sample": "dottoressa.wav",
+            "language": "it"
+          },
+          "narratore": {
+            "description": "Italian narrator voice",
+            "sample": "narratore.wav",
+            "language": "it"
+          }
+        },
+        "default_voice": "dottore",
+        "default_language": "it"
+      }
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  tags: [setup-chatterbox]
+
+- name: Display voice library info
+  debug:
+    msg: |
+      ✅ Voice library directory created: {{ models_dir }}/Chatterbox-voices
+
+      To add voices:
+      1. Record or obtain 5-10 seconds of clean audio
+      2. Save as WAV file in {{ models_dir }}/Chatterbox-voices/
+      3. Update voices.json with the new voice
+  tags: [setup-chatterbox]
+
+# ============================================
+# STEP 6: CREATE GENERATION SCRIPT
+# ============================================
+- name: Create Chatterbox generation script
+  copy:
+    dest: "{{ models_dir }}/Chatterbox-generate.py"
+    content: |
+      #!/usr/bin/env python3
+      """
+      Chatterbox TTS Generation Script
+
+      Usage:
+          python Chatterbox-generate.py "Text to speak" --output output.wav
+          python Chatterbox-generate.py "Buongiorno!" --voice dottore.wav --language it
+          python Chatterbox-generate.py "Hello!" --exaggeration 0.7
+
+      Languages: en, it, de, fr, es, pt, nl, pl, ru, ar, zh, ja, ko, etc.
+      """
+
+      import argparse
+      import os
+      import sys
+      import json
+      from pathlib import Path
+
+      # Set HuggingFace cache to models directory
+      os.environ['HF_HOME'] = '/mnt/models/huggingface'
+
+      import torch
+      import torchaudio
+      from chatterbox import ChatterboxTTS
+
+      VOICES_DIR = Path("/mnt/models/Chatterbox-voices")
+      OUTPUT_DIR = Path("/mnt/output")
+
+      def load_voice_config():
+          """Load voice library configuration"""
+          config_path = VOICES_DIR / "voices.json"
+          if config_path.exists():
+              with open(config_path) as f:
+                  return json.load(f)
+          return {"voices": {}, "default_voice": None, "default_language": "it"}
+
+      def get_voice_path(voice_name: str) -> str:
+          """Get path to voice sample file"""
+          config = load_voice_config()
+
+          # Check if it's a voice name from the library
+          if voice_name in config.get("voices", {}):
+              voice_file = config["voices"][voice_name].get("sample", f"{voice_name}.wav")
+              return str(VOICES_DIR / voice_file)
+
+          # Check if it's a direct path
+          if os.path.exists(voice_name):
+              return voice_name
+
+          # Check if it's a filename in the voices directory
+          voice_path = VOICES_DIR / voice_name
+          if voice_path.exists():
+              return str(voice_path)
+
+          return None
+
+      def list_voices():
+          """List available voices"""
+          config = load_voice_config()
+          print("\n🎙️ Available Voices:")
+          print("-" * 50)
+
+          for name, info in config.get("voices", {}).items():
+              sample_path = VOICES_DIR / info.get("sample", f"{name}.wav")
+              status = "✅" if sample_path.exists() else "❌ (missing)"
+              lang = info.get("language", "?")
+              desc = info.get("description", "")
+              print(f"  {name:15} [{lang}] {status} - {desc}")
+
+          # Also list any WAV files not in config
+          print("\n📁 WAV files in voice library:")
+          for wav_file in VOICES_DIR.glob("*.wav"):
+              print(f"  {wav_file.name}")
+
+          print("-" * 50)
+
+      def generate_speech(
+          text: str,
+          output_path: str,
+          voice_path: str = None,
+          language: str = "it",
+          exaggeration: float = 0.5,
+          cfg_weight: float = 0.5,
+          temperature: float = 0.8,
+          device: str = None
+      ):
+          """Generate speech from text"""
+
+          # Auto-detect device
+          if device is None:
+              device = "cuda" if torch.cuda.is_available() else "cpu"
+
+          print(f"🎙️ Chatterbox TTS")
+          print(f"   Device: {device}")
+          print(f"   Language: {language}")
+          print(f"   Exaggeration: {exaggeration}")
+          print(f"   Text: {text[:100]}{'...' if len(text) > 100 else ''}")
+
+          # Load model
+          print("\n📥 Loading model...")
+          model = ChatterboxTTS.from_pretrained(device=device)
+
+          # Load voice reference if provided
+          audio_prompt = None
+          if voice_path:
+              resolved_path = get_voice_path(voice_path)
+              if resolved_path and os.path.exists(resolved_path):
+                  print(f"🎤 Using voice: {resolved_path}")
+                  audio_prompt = resolved_path
+              else:
+                  print(f"⚠️ Voice not found: {voice_path}, using default")
+
+          # Generate speech
+          print("\n🔊 Generating speech...")
+
+          # Chatterbox generate method
+          if audio_prompt:
+              audio = model.generate(
+                  text=text,
+                  audio_prompt_path=audio_prompt,
+                  exaggeration=exaggeration,
+                  cfg_weight=cfg_weight,
+                  temperature=temperature
+              )
+          else:
+              audio = model.generate(
+                  text=text,
+                  exaggeration=exaggeration,
+                  cfg_weight=cfg_weight,
+                  temperature=temperature
+              )
+
+          # Save audio
+          output_path = Path(output_path)
+          output_path.parent.mkdir(parents=True, exist_ok=True)
+
+          # Get sample rate from model
+          sample_rate = model.sr
+
+          # Save as WAV
+          torchaudio.save(str(output_path), audio.cpu(), sample_rate)
+
+          print(f"\n✅ Audio saved to: {output_path}")
+          print(f"   Duration: {audio.shape[-1] / sample_rate:.2f}s")
+
+          return str(output_path)
+
+      def main():
+          parser = argparse.ArgumentParser(description="Chatterbox TTS - Generate natural speech")
+          parser.add_argument("text", nargs="?", help="Text to convert to speech")
+          parser.add_argument("--output", "-o", default=None, help="Output WAV file path")
+          parser.add_argument("--voice", "-v", default=None, help="Voice sample (name or path)")
+          parser.add_argument("--language", "-l", default="it", help="Language code (default: it)")
+          parser.add_argument("--exaggeration", "-e", type=float, default=0.5,
+                              help="Emotion intensity 0.0-1.0 (default: 0.5)")
+          parser.add_argument("--cfg-weight", type=float, default=0.5,
+                              help="CFG weight 0.0-1.0 (default: 0.5)")
+          parser.add_argument("--temperature", "-t", type=float, default=0.8,
+                              help="Temperature 0.0-1.0 (default: 0.8)")
+          parser.add_argument("--device", "-d", default=None, help="Device (cuda/cpu)")
+          parser.add_argument("--list-voices", action="store_true", help="List available voices")
+
+          args = parser.parse_args()
+
+          if args.list_voices:
+              list_voices()
+              return
+
+          if not args.text:
+              parser.print_help()
+              print("\n❌ Error: Text is required")
+              sys.exit(1)
+
+          # Generate output filename if not provided
+          if args.output is None:
+              import time
+              timestamp = time.strftime("%Y%m%d_%H%M%S")
+              args.output = str(OUTPUT_DIR / f"chatterbox_{timestamp}.wav")
+
+          generate_speech(
+              text=args.text,
+              output_path=args.output,
+              voice_path=args.voice,
+              language=args.language,
+              exaggeration=args.exaggeration,
+              cfg_weight=args.cfg_weight,
+              temperature=args.temperature,
+              device=args.device
+          )
+
+      if __name__ == "__main__":
+          main()
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-chatterbox]
+
+# ============================================
+# STEP 7: COPY GENERATE-VIDEO SCRIPT (includes chatterbox)
+# ============================================
+- name: Create application directory
+  file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-chatterbox]
+
+- name: Copy generate-video.sh to server
+  copy:
+    src: "{{ playbook_dir }}/files/generate-video.sh"
+    dest: "{{ app_dir }}/generate-video.sh"
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-chatterbox]
+
+- name: Remove existing generate-video file (if not a symlink)
+  file:
+    path: /usr/local/bin/generate-video
+    state: absent
+  tags: [setup-chatterbox]
+
+- name: Create symlink for generate-video
+  file:
+    src: "{{ app_dir }}/generate-video.sh"
+    dest: /usr/local/bin/generate-video
+    state: link
+  tags: [setup-chatterbox]
+
+# ============================================
+# FINAL STATUS
+# ============================================
+- name: Verify complete installation
+  shell: |
+    source {{ models_dir }}/Chatterbox-venv/bin/activate
+    echo "PyTorch: $(python -c 'import torch; print(torch.__version__)')"
+    echo "CUDA: $(python -c 'import torch; print(torch.cuda.is_available())')"
+    python -c "import chatterbox" && echo "Chatterbox: OK" || echo "Chatterbox: Not available"
+  become_user: ubuntu
+  args:
+    executable: /bin/bash
+  register: install_verify
+  tags: [setup-chatterbox]
+  ignore_errors: yes
+
+- name: Display setup complete
+  debug:
+    msg: |
+      ==========================================
+      ✅ BETTER-CHATTERBOX TTS SETUP COMPLETE
+      ==========================================
+
+      📁 Locations:
+         Venv:    {{ models_dir }}/Chatterbox-venv
+         Script:  {{ models_dir }}/Chatterbox-generate.py
+         Voices:  {{ models_dir }}/Chatterbox-voices
+         Config:  {{ models_dir }}/Chatterbox-voices/voices.json
+
+      🔍 Installation Check:
+      {{ install_verify.stdout }}
+
+      📝 Note: Using better-chatterbox (fork with short text fix)
+         For single words/short phrases, use F5-TTS instead.
+
+      🎙️ Usage:
+         # Via main script
+         generate-video chatterbox tts "Buongiorno, benvenuti al corso!"
+
+         # Direct Python script
+         source /mnt/models/Chatterbox-venv/bin/activate
+         python /mnt/models/Chatterbox-generate.py "Text here" -o output.wav
+
+         # With voice cloning
+         python /mnt/models/Chatterbox-generate.py "Ciao!" --voice dottore.wav -l it
+
+         # List available voices
+         python /mnt/models/Chatterbox-generate.py --list-voices
+
+      📝 Adding Custom Voices:
+         1. Record 5-10 seconds of clean speech
+         2. Save as WAV in {{ models_dir }}/Chatterbox-voices/
+         3. Update voices.json with voice metadata
+
+      🇮🇹 Italian Examples:
+         generate-video chatterbox tts "Buongiorno, sono il Dottor Rossi."
+         generate-video chatterbox tts "La pressione sanguigna normale è tra 120 e 80."
+
+      ==========================================
+  tags: [setup-chatterbox]

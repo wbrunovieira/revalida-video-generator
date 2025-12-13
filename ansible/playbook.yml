@@ -369,6 +369,16 @@
       import_tasks: tasks/setup-hunyuan.yml
       tags: [setup-hunyuan, never]  # never = only runs when explicitly requested
 
+    # Run with: ansible-playbook playbook.yml --tags setup-skyreels
+    - name: Include SkyReels-V2 I2V setup tasks
+      import_tasks: tasks/setup-skyreels.yml
+      tags: [setup-skyreels, never]  # never = only runs when explicitly requested
+
+    # Run with: ansible-playbook playbook.yml --tags setup-chatterbox
+    - name: Include Chatterbox TTS setup tasks
+      import_tasks: tasks/setup-chatterbox.yml
+      tags: [setup-chatterbox, never]  # never = only runs when explicitly requested
+
 
     # ============================================
     # STEP 8: FINAL CHECKS & DISPLAY

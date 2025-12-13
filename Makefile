@@ -239,6 +239,18 @@ setup-hunyuan: ## Setup HunyuanVideo-1.5 (8.3B parameters, multi-GPU T2V/I2V)
 		ANSIBLE_HOST_KEY_CHECKING=False \
 		ansible-playbook -i inventory.yml playbook.yml --tags setup-hunyuan
 
+setup-skyreels: ## Setup SkyReels-V2 I2V 14B (SOTA 83.9% VBench, multi-GPU)
+	@echo "$(CYAN)🎬 Setting up SkyReels-V2 I2V 14B (SOTA, multi-GPU)...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags setup-skyreels
+
+setup-chatterbox: ## Setup Chatterbox TTS (natural Italian voice, MIT license)
+	@echo "$(CYAN)🎙️ Setting up Chatterbox TTS (natural voice, 23 languages)...$(NC)"
+	@cd ansible && \
+		ANSIBLE_HOST_KEY_CHECKING=False \
+		ansible-playbook -i inventory.yml playbook.yml --tags setup-chatterbox
+
 download-model: ## Download a specific model (usage: make download-model MODEL=tencent/HunyuanVideo)
 	@if [ -z "$(MODEL)" ]; then \
 		echo "$(RED)Error: MODEL not specified$(NC)"; \

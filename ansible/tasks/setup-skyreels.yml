@@ -1,0 +1,165 @@
+# =============================================================================
+# Setup SkyReels-V2 I2V 14B 720P - SOTA Image-to-Video with Multi-GPU
+# =============================================================================
+# SkyReels-V2 is the FIRST open-source video generative model using
+# AutoRegressive Diffusion-Forcing architecture achieving SOTA performance
+#
+# Features:
+# - 14B parameters, 720P output (720x1280, 121 frames ~5s)
+# - Multi-GPU support via xDiT USP (torchrun)
+# - Supports I2V (image-to-video) and T2V (text-to-video)
+# - Achieves SOTA on VBench benchmark (83.9% total score)
+#
+# Memory Requirements:
+# - Single GPU: ~43GB VRAM (with --offload)
+# - Multi-GPU: Distributed across GPUs with --use_usp
+# =============================================================================
+
+- name: Create SkyReels venv directory
+  file:
+    path: /mnt/models/SkyReels-venv
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  tags: [setup-skyreels, never]
+
+- name: Create SkyReels venv
+  become: yes
+  become_user: ubuntu
+  shell: |
+    python3 -m venv /mnt/models/SkyReels-venv
+  args:
+    creates: /mnt/models/SkyReels-venv/bin/activate
+  tags: [setup-skyreels, never]
+
+- name: Install PyTorch in SkyReels venv
+  become: yes
+  become_user: ubuntu
+  shell: |
+    source /mnt/models/SkyReels-venv/bin/activate
+    pip install --upgrade pip
+    pip install torch==2.5.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+  args:
+    executable: /bin/bash
+  tags: [setup-skyreels, never]
+
+- name: Clone SkyReels-V2 repository
+  become: yes
+  become_user: ubuntu
+  git:
+    repo: https://github.com/SkyworkAI/SkyReels-V2.git
+    dest: /mnt/models/SkyReels-V2
+    version: main
+    force: yes
+  tags: [setup-skyreels, never]
+
+- name: Install SkyReels dependencies
+  become: yes
+  become_user: ubuntu
+  shell: |
+    source /mnt/models/SkyReels-venv/bin/activate
+    cd /mnt/models/SkyReels-V2
+    pip install -r requirements.txt
+  args:
+    executable: /bin/bash
+  tags: [setup-skyreels, never]
+
+- name: Install xDiT and additional dependencies
+  become: yes
+  become_user: ubuntu
+  shell: |
+    source /mnt/models/SkyReels-venv/bin/activate
+    pip install xfuser decord
+  args:
+    executable: /bin/bash
+  tags: [setup-skyreels, never]
+
+- name: Download SkyReels-V2-I2V-14B-720P model
+  become: yes
+  become_user: ubuntu
+  shell: |
+    source /mnt/models/SkyReels-venv/bin/activate
+
+    # Create model directory
+    mkdir -p /mnt/models/SkyReels-V2-I2V-14B-720P
+
+    echo "Downloading SkyReels-V2-I2V-14B-720P model (~28GB)..."
+    echo "This will take a while..."
+
+    # Download from HuggingFace
+    huggingface-cli download Skywork/SkyReels-V2-I2V-14B-720P \
+      --local-dir /mnt/models/SkyReels-V2-I2V-14B-720P \
+      --local-dir-use-symlinks False
+
+    echo "Model downloaded successfully!"
+    ls -lh /mnt/models/SkyReels-V2-I2V-14B-720P/
+  args:
+    executable: /bin/bash
+  async: 7200
+  poll: 60
+  tags: [setup-skyreels, never]
+
+- name: Download SkyReels-V2-T2V-14B-720P model (optional)
+  become: yes
+  become_user: ubuntu
+  shell: |
+    source /mnt/models/SkyReels-venv/bin/activate
+
+    # Create model directory
+    mkdir -p /mnt/models/SkyReels-V2-T2V-14B-720P
+
+    echo "Downloading SkyReels-V2-T2V-14B-720P model (~28GB)..."
+
+    # Download from HuggingFace
+    huggingface-cli download Skywork/SkyReels-V2-T2V-14B-720P \
+      --local-dir /mnt/models/SkyReels-V2-T2V-14B-720P \
+      --local-dir-use-symlinks False
+
+    echo "Model downloaded successfully!"
+  args:
+    executable: /bin/bash
+  async: 7200
+  poll: 60
+  tags: [setup-skyreels-t2v, never]
+
+- name: Verify SkyReels installation
+  become: yes
+  become_user: ubuntu
+  shell: |
+    source /mnt/models/SkyReels-venv/bin/activate
+    cd /mnt/models/SkyReels-V2
+
+    echo "=== SkyReels-V2 Installation Summary ==="
+    echo ""
+    echo "Python: $(python3 --version)"
+    echo "PyTorch: $(python3 -c 'import torch; print(torch.__version__)')"
+    echo "CUDA: $(python3 -c 'import torch; print(torch.version.cuda)')"
+    echo "GPUs: $(python3 -c 'import torch; print(torch.cuda.device_count())')"
+    echo ""
+    echo "Code directory: /mnt/models/SkyReels-V2"
+    echo "Model directory: /mnt/models/SkyReels-V2-I2V-14B-720P"
+    echo ""
+    echo "=== Available scripts ==="
+    ls -la *.py 2>/dev/null || echo "Scripts in subdirectory"
+    echo ""
+    echo "=== Model files ==="
+    ls -lh /mnt/models/SkyReels-V2-I2V-14B-720P/*.safetensors 2>/dev/null | head -5 || echo "Model files downloaded"
+    echo ""
+    echo "✅ SkyReels-V2 ready!"
+    echo ""
+    echo "Usage examples:"
+    echo "  # Single GPU I2V:"
+    echo "  generate-video skyreels i2v 'prompt' /path/to/image.png"
+    echo ""
+    echo "  # Multi-GPU I2V (automatic with 4 GPUs):"
+    echo "  generate-video skyreels i2v 'prompt' /path/to/image.png --multi-gpu"
+  args:
+    executable: /bin/bash
+  register: skyreels_verify
+  tags: [setup-skyreels, never]
+
+- name: Display SkyReels verification
+  debug:
+    var: skyreels_verify.stdout_lines
+  tags: [setup-skyreels, never]
